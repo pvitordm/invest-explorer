@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+from market_data import build_live_snapshot_payload, CURATED_ASSETS
 
 load_dotenv()
 
@@ -60,11 +61,24 @@ def health() -> dict:
 
 @app.post("/refresh")
 def refresh_snapshot(request: Request) -> dict:
-    return {
-        "status": "accepted",
-        "message": "Placeholder refresh received. Implement provider sync next.",
-        "requested_by": getattr(request.state, "user", None),
-    }
+    try:
+        payload = build_live_snapshot_payload()
+        return {
+            "status": "accepted",
+            "message": "Snapshot refreshed with live/fallback prices and BRL conversion.",
+            "requested_by": getattr(request.state, "user", None),
+            "snapshot_id": f"snapshot_{payload.get('updated_at', 'unknown')}",
+            "snapshot_asset_count": len(CURATED_ASSETS),
+            "live_asset_count": payload.get("live_asset_count", 0),
+            "fallback_asset_count": payload.get("fallback_asset_count", 0),
+            "data": payload,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to refresh snapshot: {str(e)}",
+            "requested_by": getattr(request.state, "user", None),
+        }
 
 
 @app.get("/watchlist")
