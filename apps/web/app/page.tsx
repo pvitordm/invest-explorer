@@ -21,9 +21,22 @@ type Asset = {
   currency: string;
 };
 
+type SnapshotAsset = Asset & {
+  asset_class?: string;
+  country_code?: string | null;
+  price: number | null;
+  fx_to_brl?: number | null;
+  valuation_brl: number | null;
+  data_quality?: "live" | "fallback";
+};
+
 type Snapshot = {
-  updatedAt: string;
-  sections: Record<string, Asset[]>;
+  base_currency: "BRL";
+  updated_at: string;
+  asset_count: number;
+  live_asset_count?: number;
+  fallback_asset_count?: number;
+  assets: SnapshotAsset[];
 };
 
 type ViewedAsset = Asset & {
@@ -31,26 +44,85 @@ type ViewedAsset = Asset & {
 };
 
 const fallbackSnapshot: Snapshot = {
-  updatedAt: new Date().toISOString(),
-  sections: {
-    br: [
-      { name: "Petrobras PN", symbol: "PETR4", exchange: "B3", currency: "BRL" },
-      { name: "Vale ON", symbol: "VALE3", exchange: "B3", currency: "BRL" }
-    ],
-    us: [
-      { name: "Apple Inc.", symbol: "AAPL", exchange: "NASDAQ", currency: "USD" },
-      { name: "Microsoft Corp.", symbol: "MSFT", exchange: "NASDAQ", currency: "USD" }
-    ],
-    jp: [
-      { name: "Toyota Motor", symbol: "7203", exchange: "TSE", currency: "JPY" },
-      { name: "Sony Group", symbol: "6758", exchange: "TSE", currency: "JPY" }
-    ],
-    crypto: [
-      { name: "Bitcoin", symbol: "BTC", exchange: "CRYPTO", currency: "USD" },
-      { name: "Ethereum", symbol: "ETH", exchange: "CRYPTO", currency: "USD" }
-    ]
-  }
+  base_currency: "BRL",
+  updated_at: new Date().toISOString(),
+  asset_count: 8,
+  live_asset_count: 0,
+  fallback_asset_count: 8,
+  assets: [
+    { name: "Petrobras PN", symbol: "PETR4", exchange: "B3", currency: "BRL", price: 37, valuation_brl: 37, data_quality: "fallback" },
+    { name: "Vale ON", symbol: "VALE3", exchange: "B3", currency: "BRL", price: 63, valuation_brl: 63, data_quality: "fallback" },
+    { name: "Apple Inc.", symbol: "AAPL", exchange: "NASDAQ", currency: "USD", price: 210, fx_to_brl: 5, valuation_brl: 1050, data_quality: "fallback" },
+    { name: "Microsoft Corp.", symbol: "MSFT", exchange: "NASDAQ", currency: "USD", price: 425, fx_to_brl: 5, valuation_brl: 2125, data_quality: "fallback" },
+    { name: "Toyota Motor", symbol: "7203", exchange: "TSE", currency: "JPY", price: 2900, fx_to_brl: 0.033, valuation_brl: 95.7, data_quality: "fallback" },
+    { name: "Sony Group", symbol: "6758", exchange: "TSE", currency: "JPY", price: 13200, fx_to_brl: 0.033, valuation_brl: 435.6, data_quality: "fallback" },
+    { name: "Bitcoin", symbol: "BTC", exchange: "CRYPTO", currency: "USD", price: 69000, fx_to_brl: 5, valuation_brl: 345000, data_quality: "fallback" },
+    { name: "Ethereum", symbol: "ETH", exchange: "CRYPTO", currency: "USD", price: 3600, fx_to_brl: 5, valuation_brl: 18000, data_quality: "fallback" }
+  ]
 };
+
+function normalizeSnapshot(raw: unknown): Snapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Record<string, unknown>;
+
+  if (Array.isArray(candidate.assets)) {
+    return {
+      base_currency: "BRL",
+      updated_at: String(candidate.updated_at ?? new Date().toISOString()),
+      asset_count: Number(candidate.asset_count ?? candidate.assets.length ?? 0),
+      live_asset_count: Number(candidate.live_asset_count ?? 0),
+      fallback_asset_count: Number(candidate.fallback_asset_count ?? 0),
+      assets: candidate.assets as SnapshotAsset[]
+    };
+  }
+
+  if (candidate.sections && typeof candidate.sections === "object") {
+    const sections = candidate.sections as Record<string, Asset[]>;
+    const merged = [
+      ...(sections.br ?? []),
+      ...(sections.us ?? []),
+      ...(sections.jp ?? []),
+      ...(sections.crypto ?? [])
+    ];
+    return {
+      base_currency: "BRL",
+      updated_at: String(candidate.updatedAt ?? new Date().toISOString()),
+      asset_count: merged.length,
+      live_asset_count: 0,
+      fallback_asset_count: merged.length,
+      assets: merged.map((item) => ({ ...item, price: null, valuation_brl: null, data_quality: "fallback" }))
+    };
+  }
+
+  return null;
+}
+
+function groupSnapshotAssets(snapshot: Snapshot): Record<"br" | "us" | "jp" | "crypto", SnapshotAsset[]> {
+  const result: Record<"br" | "us" | "jp" | "crypto", SnapshotAsset[]> = {
+    br: [],
+    us: [],
+    jp: [],
+    crypto: []
+  };
+
+  for (const asset of snapshot.assets) {
+    if (asset.exchange === "B3") result.br.push(asset);
+    else if (asset.exchange === "NASDAQ") result.us.push(asset);
+    else if (asset.exchange === "TSE") result.jp.push(asset);
+    else result.crypto.push(asset);
+  }
+
+  return result;
+}
+
+function formatCurrency(value: number | null, currency: string, locale: Locale): string {
+  if (value === null || value === undefined) return "-";
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: currency === "JPY" ? 0 : 2
+  }).format(value);
+}
 
 export default function HomePage() {
   const [locale, setLocale] = useState<Locale>("pt-BR");
@@ -62,6 +134,30 @@ export default function HomePage() {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
+  const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
+
+  async function loadLatestSnapshot() {
+    if (!hasSupabaseConfig() || !isAuthenticated || isOffline) return;
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from("snapshots")
+        .select("data")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      const latest = data?.[0]?.data;
+      const normalized = normalizeSnapshot(latest);
+      if (normalized) {
+        setSnapshot(normalized);
+        await setLastSnapshot(normalized);
+      }
+    } catch {
+      setStatusMessage(locale === "pt-BR" ? "Falha ao carregar snapshot recente." : "Failed to load latest snapshot.");
+    }
+  }
 
   useEffect(() => {
     const initial = getInitialLocale();
@@ -70,8 +166,9 @@ export default function HomePage() {
     const offline = typeof navigator !== "undefined" ? !navigator.onLine : false;
     setIsOffline(offline);
 
-    getLastSnapshot<Snapshot>().then((cached) => {
-      if (cached) setSnapshot(cached);
+    getLastSnapshot<unknown>().then((cached) => {
+      const normalized = normalizeSnapshot(cached);
+      if (normalized) setSnapshot(normalized);
       else setLastSnapshot(fallbackSnapshot).catch(() => undefined);
     });
 
@@ -127,6 +224,8 @@ export default function HomePage() {
       .catch(() => {
         setStatusMessage(locale === "pt-BR" ? "Falha ao carregar watchlist da API." : "Failed to load watchlist from API.");
       });
+
+    loadLatestSnapshot().catch(() => undefined);
   }, [isOffline, isAuthenticated, locale]);
 
   function onLocaleChange(next: Locale) {
@@ -139,7 +238,7 @@ export default function HomePage() {
     if (!navigator.onLine || !isAuthenticated || readOnlyMode) return;
     try {
       const refresh = await triggerRefresh();
-      await setLastSnapshot(snapshot);
+      await loadLatestSnapshot();
       setStatusMessage(refresh.message);
     } catch {
       setStatusMessage(locale === "pt-BR" ? "Falha ao atualizar snapshot." : "Failed to refresh snapshot.");
@@ -194,6 +293,9 @@ export default function HomePage() {
       <OfflineBanner message={msg.offlineBanner} isOffline={isOffline} />
       {readOnlyMode ? <p className="muted">{msg.readOnlyMode}</p> : null}
       {statusMessage ? <p className="muted">{statusMessage}</p> : null}
+      <p className="muted">
+        {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {new Date(snapshot.updated_at).toLocaleString(locale)} • {locale === "pt-BR" ? "Base" : "Base"}: BRL
+      </p>
 
       <div className="card">
         <h3>{msg.settings}</h3>
@@ -251,10 +353,10 @@ export default function HomePage() {
       </div>
 
       <h2 className="section-title">{msg.explore}</h2>
-      <Section title={msg.topBR} assets={snapshot.sections.br} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
-      <Section title={msg.topUS} assets={snapshot.sections.us} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
-      <Section title={msg.topJP} assets={snapshot.sections.jp} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
-      <Section title={msg.topCrypto} assets={snapshot.sections.crypto} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
+      <Section title={msg.topBR} assets={groupedAssets.br} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
+      <Section title={msg.topUS} assets={groupedAssets.us} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
+      <Section title={msg.topJP} assets={groupedAssets.jp} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
+      <Section title={msg.topCrypto} assets={groupedAssets.crypto} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
     </main>
   );
 }
@@ -262,12 +364,14 @@ export default function HomePage() {
 function Section({
   title,
   assets,
+  locale,
   onViewAsset,
   viewAssetLabel,
   readOnlyMode
 }: {
   title: string;
-  assets: Asset[];
+  assets: SnapshotAsset[];
+  locale: Locale;
   onViewAsset: (asset: Asset) => void;
   viewAssetLabel: string;
   readOnlyMode: boolean;
@@ -279,6 +383,10 @@ function Section({
         <div key={`${asset.exchange}-${asset.symbol}`} style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center" }}>
           <p>
             {asset.name} <strong>{asset.symbol}</strong> • {asset.exchange} • {asset.currency}
+            <br />
+            <span className="muted" style={{ fontSize: "0.9rem" }}>
+              {locale === "pt-BR" ? "Preço" : "Price"}: {formatCurrency(asset.price, asset.currency, locale)} • {locale === "pt-BR" ? "Valuation BRL" : "BRL valuation"}: {formatCurrency(asset.valuation_brl, "BRL", locale)} • {(asset.data_quality ?? "fallback").toUpperCase()}
+            </span>
           </p>
           <button onClick={() => onViewAsset(asset)} disabled={readOnlyMode}>{viewAssetLabel}</button>
         </div>
