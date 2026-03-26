@@ -9,6 +9,15 @@ export function hasSupabaseConfig(): boolean {
   return Boolean(supabaseUrl && supabaseAnonKey);
 }
 
+export function isSupabaseReal(): boolean {
+  // Check if this is a REAL Supabase config (not fake/test keys)
+  // Fake keys contain "test_anon_key" or URL is the fake invest-explorer one with test key
+  if (!supabaseUrl || !supabaseAnonKey) return false;
+  if (supabaseAnonKey.includes("test_anon_key")) return false;
+  if (supabaseAnonKey.includes("eyJ") && supabaseAnonKey.includes("test")) return false;
+  return true;
+}
+
 export function getSupabaseClient(): SupabaseClient {
   if (!hasSupabaseConfig()) {
     throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");

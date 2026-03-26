@@ -12,7 +12,7 @@ import {
   setLastWatchlist
 } from "@/lib/cache";
 import { getInitialLocale, Locale, t } from "@/lib/i18n";
-import { getSupabaseClient, hasSupabaseConfig } from "@/lib/supabase";
+import { getSupabaseClient, hasSupabaseConfig, isSupabaseReal } from "@/lib/supabase";
 
 type Asset = {
   name: string;
@@ -45,7 +45,7 @@ type ViewedAsset = Asset & {
 
 const fallbackSnapshot: Snapshot = {
   base_currency: "BRL",
-  updated_at: new Date().toISOString(),
+  updated_at: "2026-03-26T20:48:23.000Z",
   asset_count: 8,
   live_asset_count: 0,
   fallback_asset_count: 8,
@@ -132,12 +132,16 @@ export default function HomePage() {
   const [lastViewedAssets, setLastViewedAssetsState] = useState<ViewedAsset[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
+  const [devMode, setDevMode] = useState(false);
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
   const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
 
   async function loadLatestSnapshot() {
-    if (!hasSupabaseConfig() || !isAuthenticated || isOffline) return;
+    // In dev mode, don't attempt Supabase DB queries
+    if (devMode || isOffline) return;
+    if (!hasSupabaseConfig() || !isAuthenticated) return;
+    
     try {
       const supabase = getSupabaseClient();
       const { data, error } = await supabase
@@ -166,6 +170,10 @@ export default function HomePage() {
     const offline = typeof navigator !== "undefined" ? !navigator.onLine : false;
     setIsOffline(offline);
 
+    // Detect if we're in dev mode (Supabase not real)
+    const inDevMode = !isSupabaseReal();
+    setDevMode(inDevMode);
+
     getLastSnapshot<unknown>().then((cached) => {
       const normalized = normalizeSnapshot(cached);
       if (normalized) setSnapshot(normalized);
@@ -182,17 +190,30 @@ export default function HomePage() {
 
     let authUnsubscribe: (() => void) | null = null;
 
-    if (hasSupabaseConfig()) {
-      const supabase = getSupabaseClient();
+    // Only use Supabase auth if it's REAL (not dev mode)
+    if (hasSupabaseConfig() && !inDevMode) {
+      try {
+        const supabase = getSupabaseClient();
 
-      supabase.auth.getSession().then(({ data }) => {
-        setIsAuthenticated(Boolean(data.session?.access_token));
-      });
+        supabase.auth.getSession().then(({ data }) => {
+          setIsAuthenticated(Boolean(data.session?.access_token));
+        }).catch(() => {
+          // Supabase unreachable, already in dev mode
+        });
 
-      const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-        setIsAuthenticated(Boolean(session?.access_token));
-      });
-      authUnsubscribe = () => authListener.subscription.unsubscribe();
+        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+          setIsAuthenticated(Boolean(session?.access_token));
+        });
+        authUnsubscribe = () => authListener.subscription.unsubscribe();
+      } catch (e) {
+        console.warn("Supabase init failed, using dev mode", e);
+      }
+    } else if (inDevMode) {
+      setStatusMessage(
+        locale === "pt-BR"
+          ? "Modo DEV: Supabase não configurado. Use 'Entrar anonimamente' para começar."
+          : "DEV Mode: Supabase not configured. Click 'Sign in anonymously' to start."
+      );
     } else {
       setStatusMessage(
         locale === "pt-BR"
@@ -238,9 +259,21 @@ export default function HomePage() {
     if (!navigator.onLine || !isAuthenticated || readOnlyMode) return;
     try {
       const refresh = await triggerRefresh();
-      await loadLatestSnapshot();
+      // The API response contains the snapshot data directly
+      // Use it instead of making a Supabase DB query
+      if (refresh.snapshot_id) {
+        // In real mode with snapshot_id, try to load from DB
+        await loadLatestSnapshot();
+      } else {
+        // In dev mode, we assume the refresh call cached the data
+        // Load it from cache
+        const cached = await getLastSnapshot<unknown>();
+        const normalized = normalizeSnapshot(cached);
+        if (normalized) setSnapshot(normalized);
+      }
       setStatusMessage(refresh.message);
-    } catch {
+    } catch (e) {
+      console.error("Refresh error:", e);
       setStatusMessage(locale === "pt-BR" ? "Falha ao atualizar snapshot." : "Failed to refresh snapshot.");
     }
   }
@@ -248,26 +281,39 @@ export default function HomePage() {
   async function loginAnonymously() {
     if (readOnlyMode) return;
     
-    // Try real Supabase auth first
+    // In dev mode, skip Supabase auth entirely
+    if (devMode) {
+      setIsAuthenticated(true);
+      setStatusMessage(
+        locale === "pt-BR" 
+          ? "Sessão DEV ativa (Supabase offline)." 
+          : "DEV Session active (Supabase offline)."
+      );
+      return;
+    }
+    
+    // Try real Supabase auth
     if (hasSupabaseConfig()) {
       try {
         const supabase = getSupabaseClient();
         const { error } = await supabase.auth.signInAnonymously();
         if (!error) {
           setStatusMessage(locale === "pt-BR" ? "Sessão ativa com sucesso." : "Session is active.");
+          setIsAuthenticated(true);
           return;
         }
       } catch (e) {
-        // Fall through to dev mode
+        console.warn("Supabase auth failed", e);
       }
     }
 
-    // Dev mode fallback: simulate anonymous session
+    // Fallback: just enable dev mode
+    setDevMode(true);
     setIsAuthenticated(true);
     setStatusMessage(
       locale === "pt-BR" 
-        ? "Sessão DEV ativa (Supabase offline)." 
-        : "DEV Session active (Supabase offline)."
+        ? "Sessão DEV ativa (Supabase indisponível)." 
+        : "DEV Session active (Supabase unavailable)."
     );
   }
 
@@ -295,7 +341,7 @@ export default function HomePage() {
       <OfflineBanner message={msg.offlineBanner} isOffline={isOffline} />
       {readOnlyMode ? <p className="muted">{msg.readOnlyMode}</p> : null}
       {statusMessage ? <p className="muted">{statusMessage}</p> : null}
-      <p className="muted">
+      <p className="muted" suppressHydrationWarning>
         {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {new Date(snapshot.updated_at).toLocaleString(locale)} • {locale === "pt-BR" ? "Base" : "Base"}: BRL
       </p>
 
