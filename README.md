@@ -89,6 +89,7 @@ Web runs at `http://localhost:3000`.
 - `GET /watchlist` now reads real Supabase data (creates a default watchlist for the user if missing).
 - `POST /refresh` now builds curated market snapshot (~20 assets) with live/fallback prices and BRL valuation conversion.
 - Web now reads Supabase session and sends `Bearer <access_token>` to API for `GET /watchlist` and `POST /refresh`.
+- Web loads latest snapshot from Supabase and renders price + BRL valuation in Explore sections.
 - Web supports anonymous sign-in button (requires Anonymous Auth enabled in Supabase).
 - Offline mode is strict read-only on web: write actions are disabled and UI shows a read-only state.
 - Web also caches and displays `last_viewed_assets` via IndexedDB.
