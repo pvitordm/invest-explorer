@@ -115,6 +115,53 @@ def _persist_snapshot(client: Client, owner_id: str, payload: dict) -> str | Non
     return None
 
 
+def _load_asset_ids_map(client: Client) -> dict[tuple[str, str], str]:
+    query = client.table("assets").select("id,symbol,exchange").execute()
+    mapping: dict[tuple[str, str], str] = {}
+    for row in query.data or []:
+        symbol = str(row.get("symbol", "")).upper()
+        exchange = str(row.get("exchange", "")).upper()
+        asset_id = row.get("id")
+        if symbol and exchange and asset_id:
+            mapping[(symbol, exchange)] = asset_id
+    return mapping
+
+
+def _persist_price_history(client: Client, owner_id: str, payload: dict, snapshot_id: str | None) -> None:
+    assets = payload.get("assets") if isinstance(payload, dict) else None
+    if not isinstance(assets, list) or not assets:
+        return
+
+    asset_ids_map = _load_asset_ids_map(client)
+    rows = []
+
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        symbol = str(asset.get("symbol", "")).upper()
+        exchange = str(asset.get("exchange", "")).upper()
+        asset_id = asset_ids_map.get((symbol, exchange))
+        if not asset_id:
+            continue
+
+        rows.append(
+            {
+                "owner_id": owner_id,
+                "asset_id": asset_id,
+                "snapshot_id": snapshot_id,
+                "price": asset.get("price"),
+                "valuation_brl": asset.get("valuation_brl"),
+                "currency": asset.get("currency") or "BRL",
+                "fx_to_brl": asset.get("fx_to_brl"),
+                "data_quality": asset.get("data_quality"),
+                "collected_at": payload.get("updated_at"),
+            }
+        )
+
+    if rows:
+        client.table("price_history").insert(rows).execute()
+
+
 def _resolve_asset_id(client: Client, symbol: str, exchange: str) -> str | None:
     query = (
         client.table("assets")
@@ -231,9 +278,11 @@ def refresh_snapshot(request: Request) -> dict:
         admin = _get_supabase_admin()
         if admin and _is_valid_uuid(owner_id):
             try:
+                _upsert_curated_assets(admin)
                 persisted_id = _persist_snapshot(admin, owner_id, payload)
                 if persisted_id:
                     snapshot_id = persisted_id
+                _persist_price_history(admin, owner_id, payload, persisted_id)
             except Exception as e:
                 logger.warning(f"Failed to persist snapshot in Supabase: {e}")
 
