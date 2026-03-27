@@ -97,6 +97,51 @@ def main() -> int:
         print("  fallback_asset_count:", body.get("fallback_asset_count"))
         print("  payload asset_count:", payload.get("asset_count"))
 
+    print("[5] API /watchlist/items add/remove...")
+    cleanup_req = urllib.request.Request(
+        "http://localhost:8000/watchlist/items",
+        data=json.dumps({"symbol": "AAPL", "exchange": "NASDAQ"}).encode("utf-8"),
+        method="DELETE",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(cleanup_req, timeout=20):
+        pass
+
+    add_req = urllib.request.Request(
+        "http://localhost:8000/watchlist/items",
+        data=json.dumps({"symbol": "AAPL", "exchange": "NASDAQ"}).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(add_req, timeout=20) as response:
+        add_body = json.loads(response.read().decode("utf-8"))
+        add_items = add_body.get("items", [])
+        added = any((item.get("asset") or {}).get("symbol") == "AAPL" for item in add_items)
+        print("  add status:", response.status)
+        print("  contains AAPL after add:", added)
+
+    remove_req = urllib.request.Request(
+        "http://localhost:8000/watchlist/items",
+        data=json.dumps({"symbol": "AAPL", "exchange": "NASDAQ"}).encode("utf-8"),
+        method="DELETE",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(remove_req, timeout=20) as response:
+        remove_body = json.loads(response.read().decode("utf-8"))
+        remove_items = remove_body.get("items", [])
+        removed = all((item.get("asset") or {}).get("symbol") != "AAPL" for item in remove_items)
+        print("  remove status:", response.status)
+        print("  contains AAPL after remove:", not removed)
+
     print("[OK] Real Supabase + API integration test passed.")
     return 0
 

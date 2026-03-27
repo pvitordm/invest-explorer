@@ -7,6 +7,7 @@ from uuid import UUID
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from market_data import build_live_snapshot_payload, CURATED_ASSETS
@@ -23,6 +24,12 @@ load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 logger = logging.getLogger(__name__)
 
 _supabase_admin_client: Client | None = None
+
+
+class WatchlistItemPayload(BaseModel):
+    symbol: str
+    exchange: str
+    notes: str | None = None
 
 
 def _is_valid_uuid(value: str | None) -> bool:
@@ -105,6 +112,20 @@ def _persist_snapshot(client: Client, owner_id: str, payload: dict) -> str | Non
     )
     if result.data:
         return result.data[0].get("id")
+    return None
+
+
+def _resolve_asset_id(client: Client, symbol: str, exchange: str) -> str | None:
+    query = (
+        client.table("assets")
+        .select("id")
+        .eq("symbol", symbol)
+        .eq("exchange", exchange)
+        .limit(1)
+        .execute()
+    )
+    if query.data:
+        return query.data[0].get("id")
     return None
 
 
@@ -306,4 +327,65 @@ def get_watchlist(request: Request) -> dict:
             "watchlist": {"id": "default", "name": "Default", "is_default": True},
             "items": [],
         }
+
+
+@app.post("/watchlist/items")
+def add_watchlist_item(payload: WatchlistItemPayload, request: Request):
+    user = getattr(request.state, "user", None) or {}
+    owner_id = user.get("sub")
+    admin = _get_supabase_admin()
+    if not admin or not _is_valid_uuid(owner_id):
+        return JSONResponse(status_code=400, content={"detail": "Watchlist write requires a verified user session"})
+
+    try:
+        symbol = payload.symbol.strip().upper()
+        exchange = payload.exchange.strip().upper()
+        _upsert_curated_assets(admin)
+        watchlist = _ensure_default_watchlist(admin, owner_id)
+
+        asset_id = _resolve_asset_id(admin, symbol, exchange)
+        if not asset_id:
+            return JSONResponse(status_code=404, content={"detail": f"Asset {symbol}/{exchange} not found"})
+
+        admin.table("watchlist_items").upsert(
+            {
+                "watchlist_id": watchlist["id"],
+                "asset_id": asset_id,
+                "notes": payload.notes,
+            },
+            on_conflict="watchlist_id,asset_id",
+        ).execute()
+    except Exception as e:
+        logger.warning(f"Failed to add watchlist item: {e}")
+        return JSONResponse(status_code=500, content={"detail": "Failed to add item to watchlist"})
+
+    return get_watchlist(request)
+
+
+@app.delete("/watchlist/items")
+def remove_watchlist_item(payload: WatchlistItemPayload, request: Request):
+    user = getattr(request.state, "user", None) or {}
+    owner_id = user.get("sub")
+    admin = _get_supabase_admin()
+    if not admin or not _is_valid_uuid(owner_id):
+        return JSONResponse(status_code=400, content={"detail": "Watchlist write requires a verified user session"})
+
+    try:
+        symbol = payload.symbol.strip().upper()
+        exchange = payload.exchange.strip().upper()
+        watchlist = _ensure_default_watchlist(admin, owner_id)
+        asset_id = _resolve_asset_id(admin, symbol, exchange)
+        if asset_id:
+            (
+                admin.table("watchlist_items")
+                .delete()
+                .eq("watchlist_id", watchlist["id"])
+                .eq("asset_id", asset_id)
+                .execute()
+            )
+    except Exception as e:
+        logger.warning(f"Failed to remove watchlist item: {e}")
+        return JSONResponse(status_code=500, content={"detail": "Failed to remove item from watchlist"})
+
+    return get_watchlist(request)
 

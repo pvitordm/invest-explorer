@@ -34,6 +34,12 @@ export type ApiWatchlistResponse = {
   items: ApiWatchlistItem[];
 };
 
+export type WatchlistAssetInput = {
+  symbol: string;
+  exchange: string;
+  notes?: string | null;
+};
+
 export type ApiRefreshResponse = {
   status: string;
   message: string;
@@ -84,4 +90,25 @@ export async function fetchWatchlist(): Promise<ApiWatchlistResponse> {
 
 export async function triggerRefresh(): Promise<ApiRefreshResponse> {
   return apiRequest<ApiRefreshResponse>("/refresh", { method: "POST", body: "{}" });
+}
+
+export async function addWatchlistItem(input: WatchlistAssetInput): Promise<ApiWatchlistResponse> {
+  return apiRequest<ApiWatchlistResponse>("/watchlist/items", {
+    method: "POST",
+    body: JSON.stringify({
+      symbol: input.symbol,
+      exchange: input.exchange,
+      notes: input.notes ?? null
+    })
+  });
+}
+
+export async function removeWatchlistItem(input: WatchlistAssetInput): Promise<ApiWatchlistResponse> {
+  return apiRequest<ApiWatchlistResponse>("/watchlist/items", {
+    method: "DELETE",
+    body: JSON.stringify({
+      symbol: input.symbol,
+      exchange: input.exchange
+    })
+  });
 }

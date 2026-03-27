@@ -15,6 +15,8 @@ type Messages = {
   topUS: string;
   topJP: string;
   topCrypto: string;
+  addToWatchlist: string;
+  removeFromWatchlist: string;
 };
 
 const translations: Record<Locale, Messages> = {
@@ -32,7 +34,9 @@ const translations: Record<Locale, Messages> = {
     topBR: "Top BR",
     topUS: "Top US",
     topJP: "Top JP",
-    topCrypto: "Top Crypto"
+    topCrypto: "Top Crypto",
+    addToWatchlist: "Adicionar",
+    removeFromWatchlist: "Remover"
   },
   en: {
     title: "Invest Explorer",
@@ -48,7 +52,9 @@ const translations: Record<Locale, Messages> = {
     topBR: "Top BR",
     topUS: "Top US",
     topJP: "Top JP",
-    topCrypto: "Top Crypto"
+    topCrypto: "Top Crypto",
+    addToWatchlist: "Add",
+    removeFromWatchlist: "Remove"
   }
 };
 

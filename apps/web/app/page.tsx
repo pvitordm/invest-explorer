@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { OfflineBanner } from "@/components/OfflineBanner";
-import { fetchWatchlist, triggerRefresh, type ApiWatchlistItem } from "@/lib/api";
+import { addWatchlistItem, fetchWatchlist, removeWatchlistItem, triggerRefresh, type ApiWatchlistItem } from "@/lib/api";
 import {
   getLastSnapshot,
   getLastViewedAssets,
@@ -141,9 +141,14 @@ export default function HomePage() {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [devMode, setDevMode] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [watchlistBusyKey, setWatchlistBusyKey] = useState<string | null>(null);
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
   const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
+  const watchlistSet = useMemo(
+    () => new Set(watchlistItems.map((item) => `${item.asset.exchange}-${item.asset.symbol}`)),
+    [watchlistItems]
+  );
 
   async function loadLatestSnapshot() {
     // In dev mode, don't attempt Supabase DB queries
@@ -339,6 +344,32 @@ export default function HomePage() {
     await setLastViewedAssets(nextList);
   }
 
+  async function onToggleWatchlist(asset: SnapshotAsset) {
+    if (readOnlyMode || !isAuthenticated) return;
+    const key = `${asset.exchange}-${asset.symbol}`;
+    setWatchlistBusyKey(key);
+    try {
+      const response = watchlistSet.has(key)
+        ? await removeWatchlistItem({ symbol: asset.symbol, exchange: asset.exchange })
+        : await addWatchlistItem({ symbol: asset.symbol, exchange: asset.exchange });
+      setWatchlistItems(response.items ?? []);
+      await setLastWatchlist(response.items ?? []);
+      setStatusMessage(
+        locale === "pt-BR"
+          ? watchlistSet.has(key)
+            ? "Ativo removido da watchlist."
+            : "Ativo adicionado na watchlist."
+          : watchlistSet.has(key)
+            ? "Asset removed from watchlist."
+            : "Asset added to watchlist."
+      );
+    } catch {
+      setStatusMessage(locale === "pt-BR" ? "Falha ao atualizar watchlist." : "Failed to update watchlist.");
+    } finally {
+      setWatchlistBusyKey(null);
+    }
+  }
+
   return (
     <main>
       <div className="toolbar">
@@ -416,10 +447,10 @@ export default function HomePage() {
       </div>
 
       <h2 className="section-title">{msg.explore}</h2>
-      <Section title={msg.topBR} assets={groupedAssets.br} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
-      <Section title={msg.topUS} assets={groupedAssets.us} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
-      <Section title={msg.topJP} assets={groupedAssets.jp} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
-      <Section title={msg.topCrypto} assets={groupedAssets.crypto} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} />
+      <Section title={msg.topBR} assets={groupedAssets.br} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
+      <Section title={msg.topUS} assets={groupedAssets.us} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
+      <Section title={msg.topJP} assets={groupedAssets.jp} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
+      <Section title={msg.topCrypto} assets={groupedAssets.crypto} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
     </main>
   );
 }
@@ -430,7 +461,12 @@ function Section({
   locale,
   onViewAsset,
   viewAssetLabel,
-  readOnlyMode
+  readOnlyMode,
+  onToggleWatchlist,
+  watchlistSet,
+  watchlistBusyKey,
+  addToWatchlistLabel,
+  removeFromWatchlistLabel
 }: {
   title: string;
   assets: SnapshotAsset[];
@@ -438,6 +474,11 @@ function Section({
   onViewAsset: (asset: Asset) => void;
   viewAssetLabel: string;
   readOnlyMode: boolean;
+  onToggleWatchlist: (asset: SnapshotAsset) => void;
+  watchlistSet: Set<string>;
+  watchlistBusyKey: string | null;
+  addToWatchlistLabel: string;
+  removeFromWatchlistLabel: string;
 }) {
   return (
     <div className="card">
@@ -451,7 +492,12 @@ function Section({
               {locale === "pt-BR" ? "Preço" : "Price"}: {formatCurrency(asset.price, asset.currency, locale)} • {locale === "pt-BR" ? "Valuation BRL" : "BRL valuation"}: {formatCurrency(asset.valuation_brl, "BRL", locale)} • {(asset.data_quality ?? "fallback").toUpperCase()}
             </span>
           </p>
-          <button onClick={() => onViewAsset(asset)} disabled={readOnlyMode}>{viewAssetLabel}</button>
+          <div className="asset-actions">
+            <button onClick={() => onViewAsset(asset)} disabled={readOnlyMode}>{viewAssetLabel}</button>
+            <button onClick={() => onToggleWatchlist(asset)} disabled={readOnlyMode || watchlistBusyKey === `${asset.exchange}-${asset.symbol}`}>
+              {watchlistSet.has(`${asset.exchange}-${asset.symbol}`) ? removeFromWatchlistLabel : addToWatchlistLabel}
+            </button>
+          </div>
         </div>
       ))}
     </div>
