@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+// Use proxy path to avoid CORS issues; Next.js rewrites /api-proxy/* to the real API
+const apiBaseUrl = "/api-proxy";
 
 export type ApiWatchlistItem = {
   id: string;
@@ -38,27 +39,27 @@ export type ApiRefreshResponse = {
   message: string;
   snapshot_id?: string;
   snapshot_asset_count?: number;
+  data?: Record<string, unknown>;
 };
 
 async function getAccessToken(): Promise<string> {
   try {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession().catch(() => ({}));
     if (error) throw error;
-    const token = data.session?.access_token;
-    if (!token) throw new Error("No active Supabase session");
-    return token;
+    const token = data?.session?.access_token;
+    if (token && token.length > 10) {
+      return token;
+    }
+    throw new Error("No active Supabase session");
   } catch (e) {
     // Dev mode fallback: return a fake token that API will accept in fallback mode
+    console.warn("Using dev-token fallback", e);
     return "dev-token-" + Date.now();
   }
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  if (!apiBaseUrl) {
-    throw new Error("Missing NEXT_PUBLIC_API_BASE_URL");
-  }
-
   const token = await getAccessToken();
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,

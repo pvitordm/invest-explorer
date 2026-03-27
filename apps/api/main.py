@@ -41,6 +41,10 @@ class SupabaseJWTMiddleware(BaseHTTPMiddleware):
                 logger.warning(f"Failed to initialize JWKS client: {e}. Using fallback mode.")
 
     async def dispatch(self, request: Request, call_next: Callable):
+        # Always let CORS preflight (OPTIONS) pass through
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if request.url.path in self.excluded_paths:
             return await call_next(request)
 

@@ -259,17 +259,13 @@ export default function HomePage() {
     if (!navigator.onLine || !isAuthenticated || readOnlyMode) return;
     try {
       const refresh = await triggerRefresh();
-      // The API response contains the snapshot data directly
-      // Use it instead of making a Supabase DB query
-      if (refresh.snapshot_id) {
-        // In real mode with snapshot_id, try to load from DB
-        await loadLatestSnapshot();
-      } else {
-        // In dev mode, we assume the refresh call cached the data
-        // Load it from cache
-        const cached = await getLastSnapshot<unknown>();
-        const normalized = normalizeSnapshot(cached);
-        if (normalized) setSnapshot(normalized);
+      // The API returns the full snapshot in refresh.data
+      if (refresh.data) {
+        const normalized = normalizeSnapshot(refresh.data);
+        if (normalized) {
+          setSnapshot(normalized);
+          await setLastSnapshot(normalized);
+        }
       }
       setStatusMessage(refresh.message);
     } catch (e) {
