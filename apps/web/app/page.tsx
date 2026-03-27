@@ -61,6 +61,13 @@ const fallbackSnapshot: Snapshot = {
   ]
 };
 
+function createRuntimeFallbackSnapshot(): Snapshot {
+  return {
+    ...fallbackSnapshot,
+    updated_at: new Date().toISOString()
+  };
+}
+
 function normalizeSnapshot(raw: unknown): Snapshot | null {
   if (!raw || typeof raw !== "object") return null;
   const candidate = raw as Record<string, unknown>;
@@ -133,6 +140,7 @@ export default function HomePage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [devMode, setDevMode] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
   const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
@@ -177,7 +185,11 @@ export default function HomePage() {
     getLastSnapshot<unknown>().then((cached) => {
       const normalized = normalizeSnapshot(cached);
       if (normalized) setSnapshot(normalized);
-      else setLastSnapshot(fallbackSnapshot).catch(() => undefined);
+      else {
+        const runtimeFallback = createRuntimeFallbackSnapshot();
+        setSnapshot(runtimeFallback);
+        setLastSnapshot(runtimeFallback).catch(() => undefined);
+      }
     });
 
     getLastWatchlist<ApiWatchlistItem[]>().then((cached) => {
@@ -257,6 +269,7 @@ export default function HomePage() {
 
   async function refreshNow() {
     if (!navigator.onLine || !isAuthenticated || readOnlyMode) return;
+    setIsRefreshing(true);
     try {
       const refresh = await triggerRefresh();
       // The API returns the full snapshot in refresh.data
@@ -271,6 +284,8 @@ export default function HomePage() {
     } catch (e) {
       console.error("Refresh error:", e);
       setStatusMessage(locale === "pt-BR" ? "Falha ao atualizar snapshot." : "Failed to refresh snapshot.");
+    } finally {
+      setIsRefreshing(false);
     }
   }
 
@@ -328,8 +343,12 @@ export default function HomePage() {
     <main>
       <div className="toolbar">
         <h1>{msg.title}</h1>
-        <button onClick={refreshNow} disabled={isOffline || !isAuthenticated}>
-          {msg.refreshNow}
+        <button onClick={refreshNow} disabled={isOffline || !isAuthenticated || isRefreshing}>
+          {isRefreshing
+            ? locale === "pt-BR"
+              ? "Atualizando..."
+              : "Refreshing..."
+            : msg.refreshNow}
         </button>
       </div>
 
@@ -337,7 +356,7 @@ export default function HomePage() {
       <OfflineBanner message={msg.offlineBanner} isOffline={isOffline} />
       {readOnlyMode ? <p className="muted">{msg.readOnlyMode}</p> : null}
       {statusMessage ? <p className="muted">{statusMessage}</p> : null}
-      <p className="muted" suppressHydrationWarning>
+      <p className="muted snapshot-line" suppressHydrationWarning>
         {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {new Date(snapshot.updated_at).toLocaleString(locale)} • {locale === "pt-BR" ? "Base" : "Base"}: BRL
       </p>
 
@@ -424,11 +443,11 @@ function Section({
     <div className="card">
       <h3>{title}</h3>
       {assets.map((asset) => (
-        <div key={`${asset.exchange}-${asset.symbol}`} style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center" }}>
-          <p>
+        <div key={`${asset.exchange}-${asset.symbol}`} className="asset-row">
+          <p className="asset-info">
             {asset.name} <strong>{asset.symbol}</strong> • {asset.exchange} • {asset.currency}
             <br />
-            <span className="muted" style={{ fontSize: "0.9rem" }}>
+            <span className="muted asset-meta">
               {locale === "pt-BR" ? "Preço" : "Price"}: {formatCurrency(asset.price, asset.currency, locale)} • {locale === "pt-BR" ? "Valuation BRL" : "BRL valuation"}: {formatCurrency(asset.valuation_brl, "BRL", locale)} • {(asset.data_quality ?? "fallback").toUpperCase()}
             </span>
           </p>

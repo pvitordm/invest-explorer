@@ -1,6 +1,14 @@
 :root {
   color-scheme: light;
-  font-family: Inter, Segoe UI, system-ui, sans-serif;
+  font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+  --bg: #eef3f8;
+  --bg-accent: #dde8f3;
+  --ink: #132238;
+  --muted: #4b5d73;
+  --card: #ffffff;
+  --line: #d6e0eb;
+  --primary: #154d84;
+  --primary-hover: #0f3f6d;
 }
 
 * {
@@ -9,8 +17,11 @@
 
 body {
   margin: 0;
-  background: #f8fafc;
-  color: #0f172a;
+  background:
+    radial-gradient(circle at 8% 0%, var(--bg-accent) 0%, transparent 35%),
+    radial-gradient(circle at 92% 18%, #e5edf7 0%, transparent 30%),
+    var(--bg);
+  color: var(--ink);
 }
 
 main {
@@ -20,11 +31,12 @@ main {
 }
 
 .card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
   padding: 1rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.9rem;
+  box-shadow: 0 8px 22px rgba(27, 55, 88, 0.08);
 }
 
 .section-title {
@@ -33,7 +45,7 @@ main {
 }
 
 .muted {
-  color: #475569;
+  color: var(--muted);
 }
 
 .toolbar {
@@ -45,9 +57,68 @@ main {
 }
 
 button {
-  border: 1px solid #cbd5e1;
-  background: #fff;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #ffffff;
   border-radius: 8px;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.85rem;
   cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.2rem 0.35rem;
+  background: #fff;
+}
+
+.snapshot-line {
+  margin-bottom: 1rem;
+}
+
+.asset-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.asset-row:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.asset-info {
+  margin: 0;
+}
+
+.asset-meta {
+  font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .asset-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

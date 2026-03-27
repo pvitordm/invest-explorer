@@ -45,7 +45,7 @@ export type ApiRefreshResponse = {
 async function getAccessToken(): Promise<string> {
   try {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.auth.getSession().catch(() => ({}));
+    const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     const token = data?.session?.access_token;
     if (token && token.length > 10) {
