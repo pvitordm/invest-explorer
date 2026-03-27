@@ -1,11 +1,13 @@
 import os
+import asyncio
 import logging
 from typing import Callable
 from pathlib import Path
 from uuid import UUID
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -24,6 +26,7 @@ load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 logger = logging.getLogger(__name__)
 
 _supabase_admin_client: Client | None = None
+_scheduler_task: asyncio.Task | None = None
 
 
 class WatchlistItemPayload(BaseModel):
@@ -144,22 +147,101 @@ def _persist_price_history(client: Client, owner_id: str, payload: dict, snapsho
         if not asset_id:
             continue
 
+        currency = asset.get("currency") or "BRL"
+        fx_to_brl = asset.get("fx_to_brl")
+        if fx_to_brl is None:
+            if currency == "BRL":
+                fx_to_brl = 1.0
+            elif currency == "USD":
+                fx_to_brl = 5.0
+            elif currency == "JPY":
+                fx_to_brl = 0.033
+
+        valuation_brl = asset.get("valuation_brl")
+        price = asset.get("price")
+        if valuation_brl is None and price is not None and fx_to_brl is not None:
+            try:
+                valuation_brl = float(price) * float(fx_to_brl)
+            except Exception:
+                valuation_brl = None
+
         rows.append(
             {
                 "owner_id": owner_id,
                 "asset_id": asset_id,
                 "snapshot_id": snapshot_id,
-                "price": asset.get("price"),
-                "valuation_brl": asset.get("valuation_brl"),
-                "currency": asset.get("currency") or "BRL",
-                "fx_to_brl": asset.get("fx_to_brl"),
-                "data_quality": asset.get("data_quality"),
+                "price": price,
+                "valuation_brl": valuation_brl,
+                "currency": currency,
+                "fx_to_brl": fx_to_brl,
+                "data_quality": asset.get("data_quality") or "fallback_fx",
                 "collected_at": payload.get("updated_at"),
             }
         )
 
     if rows:
-        client.table("price_history").insert(rows).execute()
+        client.table("price_history").upsert(rows, on_conflict="owner_id,asset_id,collected_at").execute()
+
+
+def _list_owner_ids(client: Client) -> list[str]:
+    owner_ids: set[str] = set()
+    for table_name in ["snapshots", "watchlists", "portfolio_positions"]:
+        try:
+            rows = client.table(table_name).select("owner_id").limit(10000).execute().data or []
+            for row in rows:
+                owner = row.get("owner_id")
+                if _is_valid_uuid(owner):
+                    owner_ids.add(owner)
+        except Exception:
+            continue
+    return sorted(owner_ids)
+
+
+def _run_scheduled_refresh_once() -> None:
+    admin = _get_supabase_admin()
+    if not admin:
+        return
+
+    owner_ids = _list_owner_ids(admin)
+    if not owner_ids:
+        return
+
+    _upsert_curated_assets(admin)
+    payload = build_live_snapshot_payload()
+    for owner_id in owner_ids:
+        try:
+            snapshot_id = _persist_snapshot(admin, owner_id, payload)
+            _persist_price_history(admin, owner_id, payload, snapshot_id)
+        except Exception as e:
+            logger.warning(f"Scheduled refresh failed for owner {owner_id}: {e}")
+
+
+async def _scheduler_loop() -> None:
+    interval_hours = int(os.getenv("SCHEDULER_INTERVAL_HOURS", "24"))
+    if interval_hours < 1:
+        interval_hours = 24
+
+    while True:
+        try:
+            _run_scheduled_refresh_once()
+        except Exception as e:
+            logger.warning(f"Scheduled refresh cycle failed: {e}")
+
+        await asyncio.sleep(interval_hours * 3600)
+
+
+def _period_to_start(period: str) -> datetime:
+    now = datetime.now(timezone.utc)
+    p = period.lower().strip()
+    if p == "30d":
+        return now - timedelta(days=30)
+    if p == "90d":
+        return now - timedelta(days=90)
+    if p == "1y":
+        return now - timedelta(days=365)
+    if p == "5y":
+        return now - timedelta(days=365 * 5)
+    return now - timedelta(days=365)
 
 
 def _resolve_asset_id(client: Client, symbol: str, exchange: str) -> str | None:
@@ -260,6 +342,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SupabaseJWTMiddleware, supabase_url=supabase_url)
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    global _scheduler_task
+    if os.getenv("ENABLE_DAILY_REFRESH_SCHEDULER", "false").lower() in {"1", "true", "yes", "on"}:
+        if _scheduler_task is None:
+            _scheduler_task = asyncio.create_task(_scheduler_loop())
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    global _scheduler_task
+    if _scheduler_task is not None:
+        _scheduler_task.cancel()
+        _scheduler_task = None
 
 
 @app.get("/health")
@@ -437,4 +535,67 @@ def remove_watchlist_item(payload: WatchlistItemPayload, request: Request):
         return JSONResponse(status_code=500, content={"detail": "Failed to remove item from watchlist"})
 
     return get_watchlist(request)
+
+
+@app.get("/price-history")
+def get_price_history(
+    request: Request,
+    symbol: str = Query(...),
+    exchange: str = Query(...),
+    period: str = Query("1y"),
+    limit: int = Query(5000, ge=1, le=20000),
+) -> dict:
+    user = getattr(request.state, "user", None) or {}
+    owner_id = user.get("sub")
+    admin = _get_supabase_admin()
+    if not admin or not _is_valid_uuid(owner_id):
+        return {
+            "read_only": True,
+            "owner": user,
+            "asset": {"symbol": symbol.upper(), "exchange": exchange.upper()},
+            "period": period,
+            "points": [],
+        }
+
+    symbol_norm = symbol.strip().upper()
+    exchange_norm = exchange.strip().upper()
+
+    try:
+        asset_row = (
+            admin.table("assets")
+            .select("id,name,symbol,exchange,currency")
+            .eq("symbol", symbol_norm)
+            .eq("exchange", exchange_norm)
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not asset_row:
+            return JSONResponse(status_code=404, content={"detail": f"Asset {symbol_norm}/{exchange_norm} not found"})
+
+        asset = asset_row[0]
+        start_iso = _period_to_start(period).isoformat()
+        rows = (
+            admin.table("price_history")
+            .select("collected_at,price,valuation_brl,currency,fx_to_brl,data_quality")
+            .eq("owner_id", owner_id)
+            .eq("asset_id", asset["id"])
+            .gte("collected_at", start_iso)
+            .order("collected_at", desc=False)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+
+        return {
+            "read_only": False,
+            "owner": user,
+            "asset": asset,
+            "period": period,
+            "points": rows,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch price history: {e}")
+        return JSONResponse(status_code=500, content={"detail": "Failed to fetch price history"})
 

@@ -142,12 +142,12 @@ def fx_at_date(currency: str, date_key: str, usd_brl, usd_jpy) -> float | None:
 
     usd_brl_val = to_float(usd_brl.get(date_key)) if usd_brl is not None else None
     if currency == "USD":
-        return usd_brl_val
+        return usd_brl_val if usd_brl_val is not None else 5.0
 
     if currency == "JPY":
         usd_jpy_val = to_float(usd_jpy.get(date_key)) if usd_jpy is not None else None
         if usd_brl_val is None or usd_jpy_val is None or usd_jpy_val == 0:
-            return None
+            return 0.033
         return usd_brl_val / usd_jpy_val
 
     return None
@@ -210,7 +210,7 @@ def backfill_owner(
             continue
 
         for batch in chunked(rows, batch_size):
-            client.table("price_history").insert(batch).execute()
+            client.table("price_history").upsert(batch, on_conflict="owner_id,asset_id,collected_at").execute()
             total_rows += len(batch)
 
     print(f"owner {owner_id}: inserted {total_rows} rows")
