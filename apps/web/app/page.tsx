@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { OfflineBanner } from "@/components/OfflineBanner";
-import { addWatchlistItem, fetchWatchlist, removeWatchlistItem, triggerRefresh, type ApiWatchlistItem } from "@/lib/api";
+import {
+  addWatchlistItem,
+  fetchPriceHistory,
+  fetchWatchlist,
+  removeWatchlistItem,
+  triggerRefresh,
+  type ApiPriceHistoryPoint,
+  type ApiWatchlistItem
+} from "@/lib/api";
 import {
   getLastSnapshot,
   getLastViewedAssets,
@@ -42,6 +50,15 @@ type Snapshot = {
 type ViewedAsset = Asset & {
   viewedAt: string;
 };
+
+type WatchlistPerformance = {
+  name: string;
+  symbol: string;
+  exchange: string;
+  changePct: number;
+};
+
+type HistoryPeriod = "30d" | "90d" | "1y" | "5y";
 
 const fallbackSnapshot: Snapshot = {
   base_currency: "BRL",
@@ -131,6 +148,63 @@ function formatCurrency(value: number | null, currency: string, locale: Locale):
   }).format(value);
 }
 
+function pickPointValue(point: ApiPriceHistoryPoint): number | null {
+  if (typeof point.valuation_brl === "number") return point.valuation_brl;
+  if (typeof point.price === "number") return point.price;
+  return null;
+}
+
+function calcChangePct(points: ApiPriceHistoryPoint[], days: number): number | null {
+  if (!points.length) return null;
+  const lastPoint = points[points.length - 1];
+  const lastValue = pickPointValue(lastPoint);
+  if (lastValue === null || lastValue === 0) return null;
+
+  const lastTime = new Date(lastPoint.collected_at).getTime();
+  const targetTime = lastTime - days * 24 * 60 * 60 * 1000;
+
+  let baseValue: number | null = null;
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    const currentTime = new Date(points[i].collected_at).getTime();
+    if (currentTime <= targetTime) {
+      baseValue = pickPointValue(points[i]);
+      break;
+    }
+  }
+
+  if (baseValue === null || baseValue === 0) {
+    baseValue = pickPointValue(points[0]);
+  }
+
+  if (baseValue === null || baseValue === 0) return null;
+  return ((lastValue - baseValue) / baseValue) * 100;
+}
+
+function formatPercent(value: number | null, locale: Locale): string {
+  if (value === null || Number.isNaN(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toLocaleString(locale, { maximumFractionDigits: 2 })}%`;
+}
+
+function buildSparkline(points: ApiPriceHistoryPoint[], width: number, height: number): string {
+  const values = points.map(pickPointValue).filter((v): v is number => typeof v === "number");
+  if (values.length < 2) return "";
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const stepX = width / (values.length - 1);
+
+  return values
+    .map((value, index) => {
+      const x = index * stepX;
+      const normalized = (value - min) / span;
+      const y = height - normalized * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
 export default function HomePage() {
   const [locale, setLocale] = useState<Locale>("pt-BR");
   const [isOffline, setIsOffline] = useState(false);
@@ -142,6 +216,11 @@ export default function HomePage() {
   const [devMode, setDevMode] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [watchlistBusyKey, setWatchlistBusyKey] = useState<string | null>(null);
+  const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>("1y");
+  const [selectedAsset, setSelectedAsset] = useState<SnapshotAsset | null>(null);
+  const [historyPoints, setHistoryPoints] = useState<ApiPriceHistoryPoint[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [watchlistPerformance, setWatchlistPerformance] = useState<WatchlistPerformance[]>([]);
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
   const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
@@ -266,6 +345,46 @@ export default function HomePage() {
     loadLatestSnapshot().catch(() => undefined);
   }, [isOffline, isAuthenticated, locale]);
 
+  useEffect(() => {
+    if (!selectedAsset || isOffline || !isAuthenticated) return;
+    setIsHistoryLoading(true);
+    fetchPriceHistory({
+      symbol: selectedAsset.symbol,
+      exchange: selectedAsset.exchange,
+      period: historyPeriod,
+      limit: 2000
+    })
+      .then((response) => setHistoryPoints(response.points ?? []))
+      .catch(() => setHistoryPoints([]))
+      .finally(() => setIsHistoryLoading(false));
+  }, [selectedAsset, historyPeriod, isOffline, isAuthenticated]);
+
+  useEffect(() => {
+    if (isOffline || !isAuthenticated || watchlistItems.length === 0) {
+      setWatchlistPerformance([]);
+      return;
+    }
+
+    Promise.all(
+      watchlistItems.map(async (item) => {
+        const response = await fetchPriceHistory({
+          symbol: item.asset.symbol,
+          exchange: item.asset.exchange,
+          period: "90d",
+          limit: 300
+        });
+        return {
+          name: item.asset.name,
+          symbol: item.asset.symbol,
+          exchange: item.asset.exchange,
+          changePct: calcChangePct(response.points ?? [], 30) ?? 0
+        };
+      })
+    )
+      .then((data) => setWatchlistPerformance(data))
+      .catch(() => setWatchlistPerformance([]));
+  }, [isOffline, isAuthenticated, watchlistItems]);
+
   function onLocaleChange(next: Locale) {
     if (readOnlyMode) return;
     setLocale(next);
@@ -342,6 +461,11 @@ export default function HomePage() {
 
     setLastViewedAssetsState(nextList);
     await setLastViewedAssets(nextList);
+
+    const snapshotAsset = snapshot.assets.find((item) => item.symbol === asset.symbol && item.exchange === asset.exchange);
+    if (snapshotAsset) {
+      setSelectedAsset(snapshotAsset);
+    }
   }
 
   async function onToggleWatchlist(asset: SnapshotAsset) {
@@ -444,7 +568,62 @@ export default function HomePage() {
         ) : (
           watchlistItems.map((item) => <p key={item.id}>{item.display}</p>)
         )}
+
+        <div className="watchlist-summary">
+          <h4>{msg.watchlistSummary}</h4>
+          {watchlistPerformance.length === 0 ? (
+            <p className="muted">{msg.noPerformanceYet}</p>
+          ) : (
+            (() => {
+              const sorted = [...watchlistPerformance].sort((a, b) => b.changePct - a.changePct);
+              const topGainer = sorted[0];
+              const topLoser = sorted[sorted.length - 1];
+              return (
+                <>
+                  <p>
+                    {msg.topGainer}: <strong>{topGainer.symbol}</strong> <span className={topGainer.changePct >= 0 ? "change-positive" : "change-negative"}>{formatPercent(topGainer.changePct, locale)}</span>
+                  </p>
+                  <p>
+                    {msg.topLoser}: <strong>{topLoser.symbol}</strong> <span className={topLoser.changePct >= 0 ? "change-positive" : "change-negative"}>{formatPercent(topLoser.changePct, locale)}</span>
+                  </p>
+                </>
+              );
+            })()
+          )}
+        </div>
       </div>
+
+      {selectedAsset ? (
+        <div className="card">
+          <div className="history-header">
+            <h3>{msg.assetHistory}: {selectedAsset.symbol}</h3>
+            <div className="history-periods">
+              {(["30d", "90d", "1y", "5y"] as HistoryPeriod[]).map((p) => (
+                <button key={p} onClick={() => setHistoryPeriod(p)} disabled={isHistoryLoading || p === historyPeriod}>
+                  {p.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {isHistoryLoading ? (
+            <p className="muted">{locale === "pt-BR" ? "Carregando histórico..." : "Loading history..."}</p>
+          ) : historyPoints.length < 2 ? (
+            <p className="muted">{locale === "pt-BR" ? "Sem pontos suficientes para gráfico." : "Not enough points for chart."}</p>
+          ) : (
+            <>
+              <svg className="history-chart" viewBox="0 0 600 180" preserveAspectRatio="none">
+                <polyline fill="none" stroke="currentColor" strokeWidth="2" points={buildSparkline(historyPoints, 600, 180)} />
+              </svg>
+              <div className="history-metrics muted">
+                <span>{msg.dailyChange}: <strong className={(calcChangePct(historyPoints, 1) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 1), locale)}</strong></span>
+                <span>{msg.weeklyChange}: <strong className={(calcChangePct(historyPoints, 7) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 7), locale)}</strong></span>
+                <span>{msg.monthlyChange}: <strong className={(calcChangePct(historyPoints, 30) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 30), locale)}</strong></span>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       <h2 className="section-title">{msg.explore}</h2>
       <Section title={msg.topBR} assets={groupedAssets.br} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />

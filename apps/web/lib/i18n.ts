@@ -17,6 +17,14 @@ type Messages = {
   topCrypto: string;
   addToWatchlist: string;
   removeFromWatchlist: string;
+  assetHistory: string;
+  watchlistSummary: string;
+  topGainer: string;
+  topLoser: string;
+  noPerformanceYet: string;
+  dailyChange: string;
+  weeklyChange: string;
+  monthlyChange: string;
 };
 
 const translations: Record<Locale, Messages> = {
@@ -36,7 +44,15 @@ const translations: Record<Locale, Messages> = {
     topJP: "Top JP",
     topCrypto: "Top Crypto",
     addToWatchlist: "Adicionar",
-    removeFromWatchlist: "Remover"
+    removeFromWatchlist: "Remover",
+    assetHistory: "Histórico do ativo",
+    watchlistSummary: "Resumo da watchlist",
+    topGainer: "Maior alta",
+    topLoser: "Maior baixa",
+    noPerformanceYet: "Sem dados de performance ainda.",
+    dailyChange: "Variação 1D",
+    weeklyChange: "Variação 7D",
+    monthlyChange: "Variação 30D"
   },
   en: {
     title: "Invest Explorer",
@@ -54,7 +70,15 @@ const translations: Record<Locale, Messages> = {
     topJP: "Top JP",
     topCrypto: "Top Crypto",
     addToWatchlist: "Add",
-    removeFromWatchlist: "Remove"
+    removeFromWatchlist: "Remove",
+    assetHistory: "Asset history",
+    watchlistSummary: "Watchlist summary",
+    topGainer: "Top gainer",
+    topLoser: "Top loser",
+    noPerformanceYet: "No performance data yet.",
+    dailyChange: "1D change",
+    weeklyChange: "7D change",
+    monthlyChange: "30D change"
   }
 };
 

@@ -48,6 +48,33 @@ export type ApiRefreshResponse = {
   data?: Record<string, unknown>;
 };
 
+export type ApiPriceHistoryPoint = {
+  collected_at: string;
+  price: number | null;
+  valuation_brl: number | null;
+  currency: string;
+  fx_to_brl: number | null;
+  data_quality: string | null;
+};
+
+export type ApiPriceHistoryResponse = {
+  read_only: boolean;
+  owner: {
+    sub?: string;
+    role?: string;
+    email?: string;
+  };
+  asset: {
+    id?: string;
+    name?: string;
+    symbol: string;
+    exchange: string;
+    currency?: string;
+  };
+  period: string;
+  points: ApiPriceHistoryPoint[];
+};
+
 async function getAccessToken(): Promise<string> {
   try {
     const supabase = getSupabaseClient();
@@ -111,4 +138,19 @@ export async function removeWatchlistItem(input: WatchlistAssetInput): Promise<A
       exchange: input.exchange
     })
   });
+}
+
+export async function fetchPriceHistory(input: {
+  symbol: string;
+  exchange: string;
+  period?: "30d" | "90d" | "1y" | "5y";
+  limit?: number;
+}): Promise<ApiPriceHistoryResponse> {
+  const params = new URLSearchParams({
+    symbol: input.symbol,
+    exchange: input.exchange,
+    period: input.period ?? "1y",
+    limit: String(input.limit ?? 1000)
+  });
+  return apiRequest<ApiPriceHistoryResponse>(`/price-history?${params.toString()}`, { method: "GET" });
 }
