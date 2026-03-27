@@ -51,6 +51,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="How many years to backfill (default: 5).",
     )
     parser.add_argument(
+        "--start-date",
+        type=str,
+        default="",
+        help="Start date in YYYY-MM-DD. If provided, overrides --years.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default="",
+        help="End date in YYYY-MM-DD. Default is today UTC.",
+    )
+    parser.add_argument(
         "--replace",
         action="store_true",
         help="Delete existing rows in range before inserting (recommended).",
@@ -221,8 +233,18 @@ def main() -> int:
     if not owner_ids:
         raise RuntimeError("No owner ids found to backfill")
 
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=365 * args.years)
+    if args.end_date:
+        end = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        end = datetime.now(timezone.utc)
+
+    if args.start_date:
+        start = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        start = end - timedelta(days=365 * args.years)
+
+    if start >= end:
+        raise RuntimeError("start date must be before end date")
 
     print(f"Backfilling from {start.date()} to {end.date()} for {len(owner_ids)} owner(s)")
     for owner_id in owner_ids:
