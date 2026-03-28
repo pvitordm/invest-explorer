@@ -791,6 +791,36 @@ def _fetch_market_fallback_news(max_items: int, locale: str = "en") -> list[dict
     return items[:max_items]
 
 
+def _fetch_market_headline(locale: str = "en") -> dict | None:
+    direct = _fetch_market_fallback_news(1, locale=locale)
+    if direct:
+        return direct[0]
+
+    # If market-wide providers are empty, derive a headline from featured assets.
+    featured_assets = [
+        ("PETR4", "B3", "Petrobras PN"),
+        ("AAPL", "NASDAQ", "Apple Inc."),
+        ("NVDA", "NASDAQ", "NVIDIA Corp."),
+        ("BTC", "CRYPTO", "Bitcoin"),
+        ("ETH", "CRYPTO", "Ethereum"),
+    ]
+
+    candidates: list[dict] = []
+    for symbol, exchange, name in featured_assets:
+        items = _collect_asset_news(symbol, exchange, name, 2, locale=locale)
+        candidates.extend(items)
+
+    if not candidates:
+        return None
+
+    ordered = sorted(
+        candidates,
+        key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
+        reverse=True,
+    )
+    return ordered[0]
+
+
 def _collect_asset_news(symbol: str, exchange: str, asset_name: str, limit: int, locale: str = "en") -> list[dict]:
     has_finnhub = bool(os.getenv("FINNHUB_API_KEY", "").strip())
     has_alpha = bool(os.getenv("ALPHAVANTAGE_API_KEY", "").strip())
@@ -1327,8 +1357,7 @@ def get_market_overview(
         featured_symbols = ["PETR4", "AAPL", "NVDA", "BTC", "ETH"]
         featured_assets = [asset for asset in assets if str(asset.get("symbol", "")).upper() in featured_symbols]
         featured_assets = sorted(featured_assets, key=lambda asset: featured_symbols.index(str(asset.get("symbol", "")).upper()))
-        headline_items = _fetch_market_fallback_news(1, locale=locale)
-        headline = headline_items[0] if headline_items else None
+        headline = _fetch_market_headline(locale=locale)
         latest_data_at = _latest_data_updated_at(admin) or payload.get("updated_at")
         return {
             "read_only": False,
