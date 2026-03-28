@@ -933,10 +933,19 @@ class SupabaseJWTMiddleware(BaseHTTPMiddleware):
                 logger.info(f"JWT verified for user {claims.get('sub')}")
                 return await call_next(request)
             except (InvalidTokenError, Exception) as e:
-                # In dev: if JWT validation fails, fall through to fallback mode
-                logger.warning(f"JWT verification failed ({type(e).__name__}): {e}. Using fallback.")
+                # In production: reject invalid tokens
+                # In dev mode: allow fallback with fixed dev UUID
+                dev_mode = os.getenv("DEV_MODE", "").lower() == "true"
+                if not dev_mode:
+                    logger.error(f"JWT verification failed in production mode: {type(e).__name__}: {e}")
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Invalid or expired token"}
+                    )
+                # Fallback allowed only in dev mode
+                logger.warning(f"JWT verification failed in dev mode: {type(e).__name__}: {e}. Using fallback.")
         
-        # Fallback: accept token without verification (dev mode)
+        # Fallback: only reached if dev_mode is true
         # Use a fixed UUID for dev mode to pass UUID validation in endpoints
         DEV_USER_UUID = "00000000-0000-0000-0000-000000000001"
         request.state.user = {
