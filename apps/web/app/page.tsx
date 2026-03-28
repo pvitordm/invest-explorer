@@ -263,6 +263,32 @@ function formatDateTimeInBrazil(value: string, locale: Locale): string {
   }).format(date);
 }
 
+function pickLatestTimestamp(values: Array<string | null | undefined>): string | null {
+  let latestValue: string | null = null;
+  let latestTs = Number.NEGATIVE_INFINITY;
+  for (const raw of values) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (!Number.isFinite(ts)) continue;
+    if (ts > latestTs) {
+      latestTs = ts;
+      latestValue = raw;
+    }
+  }
+  return latestValue;
+}
+
+function formatAssetValueSummary(asset: {
+  price: number | null;
+  currency: string;
+  valuation_brl: number | null;
+}, locale: Locale): string {
+  if (asset.currency === "BRL") {
+    return formatCurrency(asset.price ?? asset.valuation_brl, "BRL", locale);
+  }
+  return `${formatCurrency(asset.price, asset.currency, locale)} • ${formatCurrency(asset.valuation_brl, "BRL", locale)}`;
+}
+
 function resolveNewsEmptyStateMessage(message: string | undefined, locale: Locale): string {
   const normalized = (message ?? "").trim().toLowerCase();
   if (!normalized || normalized === "ok") {
@@ -311,6 +337,10 @@ export default function HomePage() {
   const chartInitialVisibleRange = useMemo(
     () => buildInitialVisibleRange(historyPoints, historyPeriod, appliedCustomRange),
     [historyPoints, historyPeriod, appliedCustomRange]
+  );
+  const lastDataUpdatedAt = useMemo(
+    () => pickLatestTimestamp([marketOverview?.summary?.updated_at, snapshot.updated_at]),
+    [marketOverview?.summary?.updated_at, snapshot.updated_at]
   );
 
   async function loadLatestSnapshot() {
@@ -729,7 +759,7 @@ export default function HomePage() {
       {readOnlyMode ? <p className="muted">{msg.readOnlyMode}</p> : null}
       {statusMessage ? <p className="muted">{statusMessage}</p> : null}
       <p className="muted snapshot-line" suppressHydrationWarning>
-        {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {formatDateTimeInBrazil(snapshot.updated_at, locale)} ({locale === "pt-BR" ? "UTC-3" : "UTC-3"}) • {locale === "pt-BR" ? "Base" : "Base"}: BRL
+        {locale === "pt-BR" ? "Última atualização dos dados" : "Last data update"}: {formatDateTimeInBrazil(lastDataUpdatedAt ?? snapshot.updated_at, locale)} ({locale === "pt-BR" ? "UTC-3" : "UTC-3"}) • {locale === "pt-BR" ? "Base" : "Base"}: BRL
       </p>
 
       {marketOverview ? (
@@ -753,7 +783,7 @@ export default function HomePage() {
                 <strong>{asset.symbol}</strong>
                 <p>{asset.name}</p>
                 <p className="muted">
-                  {formatCurrency(asset.price, asset.currency, locale)} • {formatCurrency(asset.valuation_brl, "BRL", locale)}
+                  {formatAssetValueSummary(asset, locale)}
                 </p>
               </article>
             ))}
@@ -1002,7 +1032,9 @@ function Section({
             {asset.name} <strong>{asset.symbol}</strong> • {asset.exchange} • {asset.currency}
             <br />
             <span className="muted asset-meta">
-              {locale === "pt-BR" ? "Preço" : "Price"}: {formatCurrency(asset.price, asset.currency, locale)} • {locale === "pt-BR" ? "Valuation BRL" : "BRL valuation"}: {formatCurrency(asset.valuation_brl, "BRL", locale)} • {(asset.data_quality ?? "fallback").toUpperCase()}
+              {asset.currency === "BRL"
+                ? `${locale === "pt-BR" ? "Preço" : "Price"}: ${formatCurrency(asset.price ?? asset.valuation_brl, "BRL", locale)} • ${(asset.data_quality ?? "fallback").toUpperCase()}`
+                : `${locale === "pt-BR" ? "Preço" : "Price"}: ${formatCurrency(asset.price, asset.currency, locale)} • ${locale === "pt-BR" ? "Valuation BRL" : "BRL valuation"}: ${formatCurrency(asset.valuation_brl, "BRL", locale)} • ${(asset.data_quality ?? "fallback").toUpperCase()}`}
             </span>
           </p>
           <div className="asset-actions">
