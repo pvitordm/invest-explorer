@@ -860,47 +860,6 @@ export default function HomePage() {
       )}
 
       <div className="card">
-        <h3>{msg.settings}</h3>
-        <label>
-          {msg.language}: {" "}
-          <select
-            value={locale}
-            disabled={readOnlyMode}
-            onChange={(e) => onLocaleChange(e.target.value as Locale)}
-          >
-            <option value="pt-BR">Português (Brasil)</option>
-            <option value="en">English</option>
-          </select>
-        </label>
-        <label style={{ marginLeft: "0.75rem" }}>
-          {msg.theme}: {" "}
-          <select
-            value={themePreference}
-            disabled={readOnlyMode}
-            onChange={(e) => onThemeChange(e.target.value as ThemePreference)}
-          >
-            <option value="system">{msg.themeSystem}</option>
-            <option value="light">{msg.themeLight}</option>
-            <option value="dark">{msg.themeDark}</option>
-          </select>
-        </label>
-        <p className="muted" style={{ marginTop: "0.75rem" }}>
-          {isAuthenticated
-            ? locale === "pt-BR"
-              ? "Sessão Supabase ativa."
-              : "Supabase session is active."
-            : locale === "pt-BR"
-              ? "Sem sessão ativa."
-              : "No active session."}
-        </p>
-        {!isAuthenticated ? (
-          <button onClick={loginAnonymously} disabled={isOffline || readOnlyMode}>
-            {locale === "pt-BR" ? "Entrar anonimamente" : "Sign in anonymously"}
-          </button>
-        ) : null}
-      </div>
-
-      <div className="card">
         <h3>{msg.lastViewed}</h3>
         {lastViewedAssets.length === 0 ? (
           <p className="muted">{locale === "pt-BR" ? "Nenhum ativo visto ainda." : "No viewed assets yet."}</p>
@@ -1038,6 +997,47 @@ export default function HomePage() {
       <Section title={msg.topUS} assets={groupedAssets.us} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
       <Section title={msg.topJP} assets={groupedAssets.jp} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
       <Section title={msg.topCrypto} assets={groupedAssets.crypto} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
+
+      <div className="card">
+        <h3>{msg.settings}</h3>
+        <label>
+          {msg.language}: {" "}
+          <select
+            value={locale}
+            disabled={readOnlyMode}
+            onChange={(e) => onLocaleChange(e.target.value as Locale)}
+          >
+            <option value="pt-BR">Português (Brasil)</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <label style={{ marginLeft: "0.75rem" }}>
+          {msg.theme}: {" "}
+          <select
+            value={themePreference}
+            disabled={readOnlyMode}
+            onChange={(e) => onThemeChange(e.target.value as ThemePreference)}
+          >
+            <option value="system">{msg.themeSystem}</option>
+            <option value="light">{msg.themeLight}</option>
+            <option value="dark">{msg.themeDark}</option>
+          </select>
+        </label>
+        <p className="muted" style={{ marginTop: "0.75rem" }}>
+          {isAuthenticated
+            ? locale === "pt-BR"
+              ? "Sessão Supabase ativa."
+              : "Supabase session is active."
+            : locale === "pt-BR"
+              ? "Sem sessão ativa."
+              : "No active session."}
+        </p>
+        {!isAuthenticated ? (
+          <button onClick={loginAnonymously} disabled={isOffline || readOnlyMode}>
+            {locale === "pt-BR" ? "Entrar anonimamente" : "Sign in anonymously"}
+          </button>
+        ) : null}
+      </div>
       </main>
     </ErrorBoundary>
   );
