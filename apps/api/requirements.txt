@@ -4,3 +4,4 @@ python-dotenv==1.1.1
 PyJWT[crypto]==2.10.1
 supabase==2.15.3
 yfinance==0.2.65
+pandas>=2.0.0,<3.0.0
