@@ -5,6 +5,11 @@ import { OfflineBanner } from "@/components/OfflineBanner";
 import { InteractivePriceChart } from "@/components/InteractivePriceChart";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import {
+  SkeletonStats,
+  SkeletonChart,
+  SkeletonList,
+} from "@/components/SkeletonLoader";
+import {
   addWatchlistItem,
   fetchAssetNews,
   fetchMarketOverview,
@@ -850,7 +855,9 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <SkeletonStats />
+      )}
 
       <div className="card">
         <h3>{msg.settings}</h3>
@@ -980,7 +987,7 @@ export default function HomePage() {
           ) : null}
 
           {isHistoryLoading ? (
-            <p className="muted">{locale === "pt-BR" ? "Carregando histórico..." : "Loading history..."}</p>
+            <SkeletonChart />
           ) : historyPoints.length < 2 ? (
             <p className="muted">{locale === "pt-BR" ? "Sem pontos suficientes para gráfico." : "Not enough points for chart."}</p>
           ) : (
@@ -1005,7 +1012,7 @@ export default function HomePage() {
             <button onClick={refreshNews} disabled={isNewsLoading || isOffline || !isAuthenticated || !selectedAsset}>{msg.refreshNews}</button>
           </div>
           {isNewsLoading ? (
-            <p className="muted">{msg.loadingNews}</p>
+            <SkeletonList count={3} />
           ) : newsItems.length === 0 ? (
             <p className="muted">{newsStatusMessage || msg.noNews}</p>
           ) : (
