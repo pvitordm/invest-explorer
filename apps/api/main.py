@@ -1234,14 +1234,29 @@ def get_price_history(
                 query = query.eq("owner_id", owner_id)
             return query
 
-        owner_rows = (
-            _build_history_query(include_owner=True)
-            .order("collected_at", desc=False)
-            .limit(limit)
-            .execute()
-            .data
-            or []
-        )
+        def _fetch_history_rows(include_owner: bool, desc: bool, max_rows: int) -> list[dict]:
+            rows: list[dict] = []
+            page_size = 1000
+            offset = 0
+            while len(rows) < max_rows:
+                batch = (
+                    _build_history_query(include_owner=include_owner)
+                    .order("collected_at", desc=desc)
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                    .data
+                    or []
+                )
+                if not batch:
+                    break
+                rows.extend(batch)
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+
+            return rows[:max_rows]
+
+        owner_rows = _fetch_history_rows(include_owner=True, desc=False, max_rows=limit)
 
         rows = owner_rows
         history_source = "owner"
@@ -1249,13 +1264,10 @@ def get_price_history(
         if parsed_end is None:
             latest_owner = _safe_parse_datetime(str(owner_rows[-1].get("collected_at") or "")) if owner_rows else datetime.min.replace(tzinfo=timezone.utc)
             first_owner = _safe_parse_datetime(str(owner_rows[0].get("collected_at") or "")) if owner_rows else datetime.max.replace(tzinfo=timezone.utc)
-            shared_desc = (
-                _build_history_query(include_owner=False)
-                .order("collected_at", desc=True)
-                .limit(min(20000, max(limit * 5, limit)))
-                .execute()
-                .data
-                or []
+            shared_desc = _fetch_history_rows(
+                include_owner=False,
+                desc=True,
+                max_rows=min(50000, max(limit * 8, 5000)),
             )
             shared_rows = _unique_points_from_desc(shared_desc, limit)
             latest_shared = _safe_parse_datetime(str(shared_rows[-1].get("collected_at") or "")) if shared_rows else datetime.min.replace(tzinfo=timezone.utc)
