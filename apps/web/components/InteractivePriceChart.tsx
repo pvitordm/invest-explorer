@@ -16,6 +16,10 @@ type Props = {
   locale: string;
   currency: string;
   theme: "light" | "dark";
+  initialVisibleRange?: {
+    fromIso: string;
+    toIso: string;
+  } | null;
 };
 
 type HoverData = {
@@ -47,7 +51,12 @@ function toChartData(points: ApiPriceHistoryPoint[]): ChartDatum[] {
     .sort((a, b) => Number(a.time) - Number(b.time));
 }
 
-export function InteractivePriceChart({ points, locale, currency, theme }: Props) {
+function toUnixSeconds(iso: string): number | null {
+  const ts = Math.floor(new Date(iso).getTime() / 1000);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+export function InteractivePriceChart({ points, locale, currency, theme, initialVisibleRange = null }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const areaSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
@@ -79,7 +88,9 @@ export function InteractivePriceChart({ points, locale, currency, theme }: Props
       timeScale: {
         borderColor: isDark ? "#2a425a" : "#d6e0eb",
         timeVisible: true,
-        secondsVisible: false
+        secondsVisible: false,
+        fixRightEdge: true,
+        rightOffset: 0
       },
       localization: {
         locale
@@ -149,10 +160,22 @@ export function InteractivePriceChart({ points, locale, currency, theme }: Props
     if (!chart || !areaSeries) return;
 
     areaSeries.setData(data);
-    if (data.length > 1) {
-      chart.timeScale().fitContent();
+    if (data.length <= 1) return;
+
+    if (initialVisibleRange?.fromIso && initialVisibleRange?.toIso) {
+      const from = toUnixSeconds(initialVisibleRange.fromIso);
+      const to = toUnixSeconds(initialVisibleRange.toIso);
+      if (from !== null && to !== null && from < to) {
+        chart.timeScale().setVisibleRange({
+          from: from as Time,
+          to: to as Time,
+        });
+        return;
+      }
     }
-  }, [data]);
+
+    chart.timeScale().fitContent();
+  }, [data, initialVisibleRange]);
 
   return (
     <div className="interactive-chart-wrap">

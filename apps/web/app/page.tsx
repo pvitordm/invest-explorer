@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { InteractivePriceChart } from "@/components/InteractivePriceChart";
 import {
@@ -199,6 +199,53 @@ function calcChangePct(points: ApiPriceHistoryPoint[], days: number): number | n
   return ((lastValue - baseValue) / baseValue) * 100;
 }
 
+function filterPointsByRange(
+  points: ApiPriceHistoryPoint[],
+  period: HistoryPeriod,
+  customRange: { startDate: string; endDate: string } | null
+): ApiPriceHistoryPoint[] {
+  if (!points.length) return [];
+
+  if (period === "custom") {
+    if (!customRange) return [];
+    const startMs = new Date(customRange.startDate).getTime();
+    const endMs = new Date(customRange.endDate).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+      return [];
+    }
+    return points.filter((point) => {
+      const t = new Date(point.collected_at).getTime();
+      return t >= startMs && t <= endMs + 24 * 60 * 60 * 1000 - 1;
+    });
+  }
+
+  const daysByPeriod: Record<Exclude<HistoryPeriod, "custom">, number> = {
+    "30d": 30,
+    "90d": 90,
+    "1y": 365,
+    "5y": 365 * 5,
+  };
+
+  const lastPoint = points[points.length - 1];
+  const endMs = new Date(lastPoint.collected_at).getTime();
+  const days = daysByPeriod[period as Exclude<HistoryPeriod, "custom">] ?? 365;
+  const startMs = endMs - days * 24 * 60 * 60 * 1000;
+  return points.filter((point) => new Date(point.collected_at).getTime() >= startMs);
+}
+
+function buildInitialVisibleRange(
+  points: ApiPriceHistoryPoint[],
+  period: HistoryPeriod,
+  customRange: { startDate: string; endDate: string } | null
+): { fromIso: string; toIso: string } | null {
+  const windowed = filterPointsByRange(points, period, customRange);
+  if (!windowed.length) return null;
+  return {
+    fromIso: windowed[0].collected_at,
+    toIso: windowed[windowed.length - 1].collected_at,
+  };
+}
+
 function formatPercent(value: number | null, locale: Locale): string {
   if (value === null || Number.isNaN(value)) return "-";
   const sign = value > 0 ? "+" : "";
@@ -206,6 +253,7 @@ function formatPercent(value: number | null, locale: Locale): string {
 }
 
 export default function HomePage() {
+  const selectedAssetCardRef = useRef<HTMLDivElement | null>(null);
   const [locale, setLocale] = useState<Locale>("pt-BR");
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
@@ -236,6 +284,14 @@ export default function HomePage() {
   const watchlistSet = useMemo(
     () => new Set(watchlistItems.map((item) => `${item.asset.exchange}-${item.asset.symbol}`)),
     [watchlistItems]
+  );
+  const filteredHistoryPoints = useMemo(
+    () => filterPointsByRange(historyPoints, historyPeriod, appliedCustomRange),
+    [historyPoints, historyPeriod, appliedCustomRange]
+  );
+  const chartInitialVisibleRange = useMemo(
+    () => buildInitialVisibleRange(historyPoints, historyPeriod, appliedCustomRange),
+    [historyPoints, historyPeriod, appliedCustomRange]
   );
 
   async function loadLatestSnapshot() {
@@ -435,23 +491,17 @@ export default function HomePage() {
   useEffect(() => {
     if (!selectedAsset || isOffline || !isAuthenticated) return;
 
-    if (historyPeriod === "custom" && !appliedCustomRange) {
-      return;
-    }
-
     setIsHistoryLoading(true);
     fetchPriceHistory({
       symbol: selectedAsset.symbol,
       exchange: selectedAsset.exchange,
-      period: historyPeriod,
-      startDate: historyPeriod === "custom" ? appliedCustomRange?.startDate : undefined,
-      endDate: historyPeriod === "custom" ? appliedCustomRange?.endDate : undefined,
-      limit: 2000
+      period: "5y",
+      limit: 5000
     })
       .then((response) => setHistoryPoints(response.points ?? []))
       .catch(() => setHistoryPoints([]))
       .finally(() => setIsHistoryLoading(false));
-  }, [selectedAsset, historyPeriod, appliedCustomRange, isOffline, isAuthenticated]);
+  }, [selectedAsset, isOffline, isAuthenticated]);
 
   useEffect(() => {
     if (isOffline || !isAuthenticated || watchlistItems.length === 0) {
@@ -478,6 +528,16 @@ export default function HomePage() {
       .then((data) => setWatchlistPerformance(data))
       .catch(() => setWatchlistPerformance([]));
   }, [isOffline, isAuthenticated, watchlistItems]);
+
+  useEffect(() => {
+    if (!selectedAsset || !selectedAssetCardRef.current) return;
+    requestAnimationFrame(() => {
+      selectedAssetCardRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [selectedAsset]);
 
   function onLocaleChange(next: Locale) {
     if (readOnlyMode) return;
@@ -797,7 +857,7 @@ export default function HomePage() {
       </div>
 
       {selectedAsset ? (
-        <div className="card">
+        <div className="card" ref={selectedAssetCardRef}>
           <div className="history-header">
             <h3>{msg.assetHistory}: {selectedAsset.symbol}</h3>
             <div className="history-periods">
@@ -839,11 +899,17 @@ export default function HomePage() {
             <p className="muted">{locale === "pt-BR" ? "Sem pontos suficientes para gráfico." : "Not enough points for chart."}</p>
           ) : (
             <>
-              <InteractivePriceChart points={historyPoints} locale={locale} currency="BRL" theme={resolvedTheme} />
+              <InteractivePriceChart
+                points={historyPoints}
+                locale={locale}
+                currency="BRL"
+                theme={resolvedTheme}
+                initialVisibleRange={chartInitialVisibleRange}
+              />
               <div className="history-metrics muted">
-                <span>{msg.dailyChange}: <strong className={(calcChangePct(historyPoints, 1) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 1), locale)}</strong></span>
-                <span>{msg.weeklyChange}: <strong className={(calcChangePct(historyPoints, 7) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 7), locale)}</strong></span>
-                <span>{msg.monthlyChange}: <strong className={(calcChangePct(historyPoints, 30) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 30), locale)}</strong></span>
+                <span>{msg.dailyChange}: <strong className={(calcChangePct(filteredHistoryPoints, 1) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(filteredHistoryPoints, 1), locale)}</strong></span>
+                <span>{msg.weeklyChange}: <strong className={(calcChangePct(filteredHistoryPoints, 7) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(filteredHistoryPoints, 7), locale)}</strong></span>
+                <span>{msg.monthlyChange}: <strong className={(calcChangePct(filteredHistoryPoints, 30) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(filteredHistoryPoints, 30), locale)}</strong></span>
               </div>
             </>
           )}

@@ -6,6 +6,7 @@ from typing import Callable
 from pathlib import Path
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _supabase_admin_client: Client | None = None
 _scheduler_task: asyncio.Task | None = None
+BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 class WatchlistItemPayload(BaseModel):
@@ -213,8 +215,21 @@ def _run_scheduled_refresh_once() -> None:
     if not admin:
         return
 
+    started_at = datetime.now(timezone.utc)
+    status = "ok"
+    message = "scheduled refresh completed"
+    success_owners = 0
+
     owner_ids = _list_owner_ids(admin)
     if not owner_ids:
+        _persist_scheduler_run(
+            admin,
+            status="skipped",
+            message="No owners found for scheduled refresh",
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc),
+            metadata={"owner_count": 0, "success_owners": 0},
+        )
         return
 
     _upsert_curated_assets(admin)
@@ -227,22 +242,142 @@ def _run_scheduled_refresh_once() -> None:
         try:
             snapshot_id = _persist_snapshot(admin, owner_id, payload)
             _persist_price_history(admin, owner_id, payload, snapshot_id)
+            success_owners += 1
         except Exception as e:
+            status = "partial"
+            message = f"Some owner refresh operations failed: {e}"
             logger.warning(f"Scheduled refresh failed for owner {owner_id}: {e}")
+
+    _persist_scheduler_run(
+        admin,
+        status=status,
+        message=message,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
+        metadata={
+            "owner_count": len(owner_ids),
+            "success_owners": success_owners,
+            "asset_count": payload.get("asset_count", 0),
+            "live_asset_count": payload.get("live_asset_count", 0),
+            "fallback_asset_count": payload.get("fallback_asset_count", 0),
+            "updated_at": payload.get("updated_at"),
+        },
+    )
+
+
+def _persist_scheduler_run(
+    client: Client,
+    *,
+    status: str,
+    message: str,
+    started_at: datetime,
+    finished_at: datetime,
+    metadata: dict,
+) -> None:
+    try:
+        client.table("scheduler_runs").insert(
+            {
+                "status": status,
+                "message": message,
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
+                "metadata": metadata,
+            }
+        ).execute()
+    except Exception as e:
+        text = str(e)
+        if "PGRST205" in text or "scheduler_runs" in text:
+            logger.info("Scheduler audit table not available yet; skipping persistence")
+            return
+        logger.warning(f"Failed to persist scheduler run audit: {e}")
+
+
+def _get_scheduler_runs(client: Client, limit: int = 10) -> list[dict]:
+    try:
+        rows = (
+            client.table("scheduler_runs")
+            .select("id,status,message,started_at,finished_at,created_at,metadata")
+            .order("started_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        return rows
+    except Exception as e:
+        text = str(e)
+        if "PGRST205" in text or "scheduler_runs" in text:
+            return []
+        logger.warning(f"Failed to load scheduler run audit: {e}")
+        return []
+
+
+def _parse_scheduler_brt_times(raw: str | None) -> list[tuple[int, int]]:
+    text = (raw or "").strip()
+    parsed: list[tuple[int, int]] = []
+    for token in text.split(","):
+        clean = token.strip()
+        if not clean:
+            continue
+        try:
+            hour_str, minute_str = clean.split(":", 1)
+            hour = int(hour_str)
+            minute = int(minute_str)
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                parsed.append((hour, minute))
+        except Exception:
+            continue
+
+    unique_sorted = sorted(set(parsed))
+    return unique_sorted or [(8, 0), (14, 0), (20, 0)]
+
+
+def _next_run_at_utc(now_utc: datetime, brt_times: list[tuple[int, int]]) -> datetime:
+    now_brt = now_utc.astimezone(BRT_TZ)
+    candidates: list[datetime] = []
+
+    for day_offset in (0, 1):
+        base_day = (now_brt + timedelta(days=day_offset)).date()
+        for hour, minute in brt_times:
+            candidate_brt = datetime(
+                base_day.year,
+                base_day.month,
+                base_day.day,
+                hour,
+                minute,
+                tzinfo=BRT_TZ,
+            )
+            if candidate_brt > now_brt:
+                candidates.append(candidate_brt)
+
+    next_brt = min(candidates)
+    return next_brt.astimezone(timezone.utc)
 
 
 async def _scheduler_loop() -> None:
-    interval_hours = int(os.getenv("SCHEDULER_INTERVAL_HOURS", "24"))
-    if interval_hours < 1:
-        interval_hours = 24
+    schedule_raw = os.getenv("SCHEDULER_BRT_TIMES", "08:00,14:00,20:00")
+
+    brt_times = _parse_scheduler_brt_times(schedule_raw)
+    logger.info(
+        "Scheduler enabled for BRT slots: %s",
+        ", ".join(f"{h:02d}:{m:02d}" for h, m in brt_times),
+    )
 
     while True:
+        now_utc = datetime.now(timezone.utc)
+        next_run_utc = _next_run_at_utc(now_utc, brt_times)
+        sleep_seconds = max(1.0, (next_run_utc - now_utc).total_seconds())
+        logger.info(
+            "Next scheduled refresh at %s BRT (%s UTC)",
+            next_run_utc.astimezone(BRT_TZ).isoformat(timespec="seconds"),
+            next_run_utc.isoformat(timespec="seconds"),
+        )
+        await asyncio.sleep(sleep_seconds)
+
         try:
             _run_scheduled_refresh_once()
         except Exception as e:
             logger.warning(f"Scheduled refresh cycle failed: {e}")
-
-        await asyncio.sleep(interval_hours * 3600)
 
 
 def _period_to_start(period: str) -> datetime:
@@ -667,7 +802,7 @@ app.add_middleware(SupabaseJWTMiddleware, supabase_url=supabase_url)
 @app.on_event("startup")
 async def on_startup() -> None:
     global _scheduler_task
-    if os.getenv("ENABLE_DAILY_REFRESH_SCHEDULER", "false").lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("ENABLE_DAILY_REFRESH_SCHEDULER", "true").lower() in {"1", "true", "yes", "on"}:
         if _scheduler_task is None:
             _scheduler_task = asyncio.create_task(_scheduler_loop())
 
@@ -683,6 +818,43 @@ async def on_shutdown() -> None:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "invest-explorer-api"}
+
+
+@app.get("/scheduler/status")
+def scheduler_status() -> dict:
+    enabled = os.getenv("ENABLE_DAILY_REFRESH_SCHEDULER", "true").lower() in {"1", "true", "yes", "on"}
+    brt_times = _parse_scheduler_brt_times(os.getenv("SCHEDULER_BRT_TIMES", "08:00,14:00,20:00"))
+    now_utc = datetime.now(timezone.utc)
+    next_run_utc = _next_run_at_utc(now_utc, brt_times)
+    admin = _get_supabase_admin()
+    history = _get_scheduler_runs(admin, limit=1) if admin else []
+    last_run = history[0] if history else None
+    return {
+        "enabled": enabled,
+        "timezone": "America/Sao_Paulo",
+        "slots_brt": [f"{hour:02d}:{minute:02d}" for hour, minute in brt_times],
+        "now_brt": now_utc.astimezone(BRT_TZ).isoformat(timespec="seconds"),
+        "next_run_brt": next_run_utc.astimezone(BRT_TZ).isoformat(timespec="seconds"),
+        "next_run_utc": next_run_utc.isoformat(timespec="seconds"),
+        "task_running": _scheduler_task is not None and not _scheduler_task.done(),
+        "last_run": last_run,
+    }
+
+
+@app.get("/scheduler/history")
+def scheduler_history(limit: int = Query(10, ge=1, le=100)) -> dict:
+    admin = _get_supabase_admin()
+    if not admin:
+        return {
+            "items": [],
+            "message": "Supabase admin not configured",
+        }
+
+    items = _get_scheduler_runs(admin, limit=limit)
+    return {
+        "items": items,
+        "count": len(items),
+    }
 
 
 @app.post("/refresh")
