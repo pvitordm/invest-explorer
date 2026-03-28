@@ -1,0 +1,71 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: 'apps/web/package-lock.json'
+    
+    - name: Build backend
+      run: |
+        cd apps/api
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Build frontend
+      run: |
+        cd apps/web
+        npm ci
+        npm run build
+    
+    - name: Run pre-deployment tests
+      run: |
+        cd apps/api
+        pytest tests/ -v --tb=short
+    
+    - name: Create deployment artifact
+      run: |
+        mkdir -p deploy
+        cp -r apps/web/.next deploy/
+        cp -r apps/api deploy/
+        echo "Build date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" > deploy/BUILD_INFO.txt
+        echo "Commit: ${{ github.sha }}" >> deploy/BUILD_INFO.txt
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-${{ github.event.inputs.environment }}
+        path: deploy/
+        retention-days: 30
+    
+    - name: Notify deployment
+      run: |
+        echo "🚀 Deployment artifacts prepared for ${{ github.event.inputs.environment }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Author: ${{ github.actor }}"
