@@ -75,6 +75,29 @@ export type ApiPriceHistoryResponse = {
   points: ApiPriceHistoryPoint[];
 };
 
+export type ApiWatchlistNewsItem = {
+  symbol: string;
+  asset_name: string;
+  title: string;
+  description: string | null;
+  url: string;
+  published_at: string;
+  source: string | null;
+  image: string | null;
+};
+
+export type ApiWatchlistNewsResponse = {
+  read_only: boolean;
+  owner: {
+    sub?: string;
+    role?: string;
+    email?: string;
+  };
+  source: string;
+  items: ApiWatchlistNewsItem[];
+  message?: string;
+};
+
 async function getAccessToken(): Promise<string> {
   try {
     const supabase = getSupabaseClient();
@@ -156,4 +179,16 @@ export async function fetchPriceHistory(input: {
   if (input.startDate) params.set("start_date", input.startDate);
   if (input.endDate) params.set("end_date", input.endDate);
   return apiRequest<ApiPriceHistoryResponse>(`/price-history?${params.toString()}`, { method: "GET" });
+}
+
+export async function fetchWatchlistNews(input?: {
+  limit?: number;
+  perAsset?: number;
+  locale?: string;
+}): Promise<ApiWatchlistNewsResponse> {
+  const params = new URLSearchParams();
+  params.set("limit", String(input?.limit ?? 20));
+  params.set("per_asset", String(input?.perAsset ?? 4));
+  params.set("locale", input?.locale ?? "en");
+  return apiRequest<ApiWatchlistNewsResponse>(`/watchlist/news?${params.toString()}`, { method: "GET" });
 }

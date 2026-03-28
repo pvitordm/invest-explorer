@@ -15,6 +15,7 @@ type Props = {
   points: ApiPriceHistoryPoint[];
   locale: string;
   currency: string;
+  theme: "light" | "dark";
 };
 
 type HoverData = {
@@ -46,7 +47,7 @@ function toChartData(points: ApiPriceHistoryPoint[]): ChartDatum[] {
     .sort((a, b) => Number(a.time) - Number(b.time));
 }
 
-export function InteractivePriceChart({ points, locale, currency }: Props) {
+export function InteractivePriceChart({ points, locale, currency, theme }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const areaSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
@@ -58,23 +59,25 @@ export function InteractivePriceChart({ points, locale, currency }: Props) {
     const container = containerRef.current;
     if (!container || chartRef.current) return;
 
+    const isDark = theme === "dark";
+
     const chart = createChart(container, {
       width: container.clientWidth,
       height: 300,
       layout: {
-        background: { type: ColorType.Solid, color: "#ffffff" },
-        textColor: "#3d5068",
+        background: { type: ColorType.Solid, color: isDark ? "#111a24" : "#ffffff" },
+        textColor: isDark ? "#b7c8db" : "#3d5068",
         attributionLogo: true
       },
       grid: {
-        vertLines: { color: "#edf2f7" },
-        horzLines: { color: "#edf2f7" }
+        vertLines: { color: isDark ? "#203347" : "#edf2f7" },
+        horzLines: { color: isDark ? "#203347" : "#edf2f7" }
       },
       rightPriceScale: {
-        borderColor: "#d6e0eb"
+        borderColor: isDark ? "#2a425a" : "#d6e0eb"
       },
       timeScale: {
-        borderColor: "#d6e0eb",
+        borderColor: isDark ? "#2a425a" : "#d6e0eb",
         timeVisible: true,
         secondsVisible: false
       },
@@ -82,17 +85,17 @@ export function InteractivePriceChart({ points, locale, currency }: Props) {
         locale
       },
       crosshair: {
-        vertLine: { color: "#154d84", width: 1 },
-        horzLine: { color: "#154d84", width: 1 }
+        vertLine: { color: isDark ? "#8bb8e8" : "#154d84", width: 1 },
+        horzLine: { color: isDark ? "#8bb8e8" : "#154d84", width: 1 }
       },
       handleScroll: true,
       handleScale: true
     });
 
     const areaSeries = chart.addSeries(AreaSeries, {
-      lineColor: "#154d84",
-      topColor: "rgba(21, 77, 132, 0.28)",
-      bottomColor: "rgba(21, 77, 132, 0.04)",
+      lineColor: isDark ? "#8bb8e8" : "#154d84",
+      topColor: isDark ? "rgba(139, 184, 232, 0.34)" : "rgba(21, 77, 132, 0.28)",
+      bottomColor: isDark ? "rgba(139, 184, 232, 0.06)" : "rgba(21, 77, 132, 0.04)",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true
@@ -138,7 +141,7 @@ export function InteractivePriceChart({ points, locale, currency }: Props) {
       chartRef.current = null;
       areaSeriesRef.current = null;
     };
-  }, [locale]);
+  }, [locale, theme]);
 
   useEffect(() => {
     const chart = chartRef.current;

@@ -30,6 +30,14 @@ type Messages = {
   toDate: string;
   applyRange: string;
   invalidDateRange: string;
+  theme: string;
+  themeSystem: string;
+  themeLight: string;
+  themeDark: string;
+  relevantNews: string;
+  refreshNews: string;
+  noNews: string;
+  loadingNews: string;
 };
 
 const translations: Record<Locale, Messages> = {
@@ -62,7 +70,15 @@ const translations: Record<Locale, Messages> = {
     fromDate: "De",
     toDate: "Até",
     applyRange: "Aplicar",
-    invalidDateRange: "Selecione um intervalo válido de datas."
+    invalidDateRange: "Selecione um intervalo válido de datas.",
+    theme: "Tema",
+    themeSystem: "Sistema",
+    themeLight: "Claro",
+    themeDark: "Escuro",
+    relevantNews: "Notícias relevantes",
+    refreshNews: "Atualizar notícias",
+    noNews: "Sem notícias no momento.",
+    loadingNews: "Carregando notícias..."
   },
   en: {
     title: "Invest Explorer",
@@ -93,7 +109,15 @@ const translations: Record<Locale, Messages> = {
     fromDate: "From",
     toDate: "To",
     applyRange: "Apply",
-    invalidDateRange: "Select a valid date range."
+    invalidDateRange: "Select a valid date range.",
+    theme: "Theme",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
+    relevantNews: "Relevant news",
+    refreshNews: "Refresh news",
+    noNews: "No news right now.",
+    loadingNews: "Loading news..."
   }
 };
 

@@ -6,10 +6,12 @@ import { InteractivePriceChart } from "@/components/InteractivePriceChart";
 import {
   addWatchlistItem,
   fetchPriceHistory,
+  fetchWatchlistNews,
   fetchWatchlist,
   removeWatchlistItem,
   triggerRefresh,
   type ApiPriceHistoryPoint,
+  type ApiWatchlistNewsItem,
   type ApiWatchlistItem
 } from "@/lib/api";
 import {
@@ -60,6 +62,7 @@ type WatchlistPerformance = {
 };
 
 type HistoryPeriod = "30d" | "90d" | "1y" | "5y" | "custom";
+type ThemePreference = "system" | "light" | "dark";
 
 function isoDateDaysAgo(days: number): string {
   const d = new Date();
@@ -199,6 +202,8 @@ function formatPercent(value: number | null, locale: Locale): string {
 
 export default function HomePage() {
   const [locale, setLocale] = useState<Locale>("pt-BR");
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
   const [isOffline, setIsOffline] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot>(fallbackSnapshot);
   const [watchlistItems, setWatchlistItems] = useState<ApiWatchlistItem[]>([]);
@@ -216,6 +221,8 @@ export default function HomePage() {
   const [historyPoints, setHistoryPoints] = useState<ApiPriceHistoryPoint[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [watchlistPerformance, setWatchlistPerformance] = useState<WatchlistPerformance[]>([]);
+  const [newsItems, setNewsItems] = useState<ApiWatchlistNewsItem[]>([]);
+  const [isNewsLoading, setIsNewsLoading] = useState(false);
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
   const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
@@ -249,6 +256,35 @@ export default function HomePage() {
       setStatusMessage(locale === "pt-BR" ? "Falha ao carregar snapshot recente." : "Failed to load latest snapshot.");
     }
   }
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const savedTheme = window.localStorage.getItem("theme_preference");
+    const initialTheme: ThemePreference = savedTheme === "light" || savedTheme === "dark" || savedTheme === "system" ? savedTheme : "system";
+    setThemePreference(initialTheme);
+
+    const applyTheme = (pref: ThemePreference) => {
+      const next = pref === "system" ? (media.matches ? "dark" : "light") : pref;
+      setResolvedTheme(next);
+      document.documentElement.setAttribute("data-theme", next);
+      document.documentElement.style.colorScheme = next;
+    };
+
+    applyTheme(initialTheme);
+    const onMediaChange = () => applyTheme(themePreference === "system" ? "system" : themePreference);
+    media.addEventListener("change", onMediaChange);
+
+    return () => media.removeEventListener("change", onMediaChange);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const next = themePreference === "system" ? (media.matches ? "dark" : "light") : themePreference;
+    setResolvedTheme(next);
+    document.documentElement.setAttribute("data-theme", next);
+    document.documentElement.style.colorScheme = next;
+    window.localStorage.setItem("theme_preference", themePreference);
+  }, [themePreference]);
 
   useEffect(() => {
     const initial = getInitialLocale();
@@ -341,6 +377,23 @@ export default function HomePage() {
   }, [isOffline, isAuthenticated, locale]);
 
   useEffect(() => {
+    if (isOffline || !isAuthenticated || watchlistItems.length === 0) {
+      setNewsItems([]);
+      return;
+    }
+
+    setIsNewsLoading(true);
+    fetchWatchlistNews({
+      locale,
+      limit: 20,
+      perAsset: 4
+    })
+      .then((response) => setNewsItems(response.items ?? []))
+      .catch(() => setNewsItems([]))
+      .finally(() => setIsNewsLoading(false));
+  }, [isOffline, isAuthenticated, watchlistItems, locale]);
+
+  useEffect(() => {
     if (!selectedAsset || isOffline || !isAuthenticated) return;
 
     if (historyPeriod === "custom" && !appliedCustomRange) {
@@ -391,6 +444,11 @@ export default function HomePage() {
     if (readOnlyMode) return;
     setLocale(next);
     localStorage.setItem("locale", next);
+  }
+
+  function onThemeChange(next: ThemePreference) {
+    if (readOnlyMode) return;
+    setThemePreference(next);
   }
 
   async function refreshNow() {
@@ -510,6 +568,23 @@ export default function HomePage() {
     setStatusMessage("");
   }
 
+  async function refreshNews() {
+    if (isOffline || !isAuthenticated) return;
+    setIsNewsLoading(true);
+    try {
+      const response = await fetchWatchlistNews({
+        locale,
+        limit: 20,
+        perAsset: 4
+      });
+      setNewsItems(response.items ?? []);
+    } catch {
+      setNewsItems([]);
+    } finally {
+      setIsNewsLoading(false);
+    }
+  }
+
   return (
     <main>
       <div className="toolbar">
@@ -542,6 +617,18 @@ export default function HomePage() {
           >
             <option value="pt-BR">Português (Brasil)</option>
             <option value="en">English</option>
+          </select>
+        </label>
+        <label style={{ marginLeft: "0.75rem" }}>
+          {msg.theme}: {" "}
+          <select
+            value={themePreference}
+            disabled={readOnlyMode}
+            onChange={(e) => onThemeChange(e.target.value as ThemePreference)}
+          >
+            <option value="system">{msg.themeSystem}</option>
+            <option value="light">{msg.themeLight}</option>
+            <option value="dark">{msg.themeDark}</option>
           </select>
         </label>
         <p className="muted" style={{ marginTop: "0.75rem" }}>
@@ -609,6 +696,32 @@ export default function HomePage() {
         </div>
       </div>
 
+      <div className="card">
+        <div className="news-header">
+          <h3>{msg.relevantNews}</h3>
+          <button onClick={refreshNews} disabled={isNewsLoading || isOffline || !isAuthenticated}>{msg.refreshNews}</button>
+        </div>
+        {isNewsLoading ? (
+          <p className="muted">{msg.loadingNews}</p>
+        ) : newsItems.length === 0 ? (
+          <p className="muted">{msg.noNews}</p>
+        ) : (
+          <div className="news-list">
+            {newsItems.slice(0, 12).map((item) => (
+              <article key={`${item.symbol}-${item.url}`} className="news-item">
+                <p className="news-meta muted">
+                  <strong>{item.symbol}</strong>
+                  {item.source ? ` • ${item.source}` : ""}
+                  {item.published_at ? ` • ${new Date(item.published_at).toLocaleString(locale)}` : ""}
+                </p>
+                <a href={item.url} target="_blank" rel="noreferrer" className="news-title">{item.title}</a>
+                {item.description ? <p className="muted">{item.description}</p> : null}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+
       {selectedAsset ? (
         <div className="card">
           <div className="history-header">
@@ -652,7 +765,7 @@ export default function HomePage() {
             <p className="muted">{locale === "pt-BR" ? "Sem pontos suficientes para gráfico." : "Not enough points for chart."}</p>
           ) : (
             <>
-              <InteractivePriceChart points={historyPoints} locale={locale} currency="BRL" />
+              <InteractivePriceChart points={historyPoints} locale={locale} currency="BRL" theme={resolvedTheme} />
               <div className="history-metrics muted">
                 <span>{msg.dailyChange}: <strong className={(calcChangePct(historyPoints, 1) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 1), locale)}</strong></span>
                 <span>{msg.weeklyChange}: <strong className={(calcChangePct(historyPoints, 7) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 7), locale)}</strong></span>

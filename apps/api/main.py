@@ -1,10 +1,13 @@
 import os
 import asyncio
 import logging
+import json
 from typing import Callable
 from pathlib import Path
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
@@ -256,6 +259,42 @@ def _resolve_asset_id(client: Client, symbol: str, exchange: str) -> str | None:
     if query.data:
         return query.data[0].get("id")
     return None
+
+
+def _safe_parse_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _fetch_gnews_articles(query: str, max_items: int, locale: str = "en") -> list[dict]:
+    api_key = os.getenv("GNEWS_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    language = "pt" if locale.lower().startswith("pt") else "en"
+    endpoint = "https://gnews.io/api/v4/search"
+    from_date = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    params = {
+        "q": query,
+        "lang": language,
+        "sortby": "publishedAt",
+        "max": max(1, min(max_items, 10)),
+        "from": from_date,
+        "apikey": api_key,
+    }
+
+    req = Request(f"{endpoint}?{urlencode(params)}", headers={"User-Agent": "invest-explorer/1.0"})
+    with urlopen(req, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload.get("articles", []) if isinstance(payload, dict) else []
 
 
 class SupabaseJWTMiddleware(BaseHTTPMiddleware):
@@ -638,4 +677,86 @@ def get_price_history(
     except Exception as e:
         logger.warning(f"Failed to fetch price history: {e}")
         return JSONResponse(status_code=500, content={"detail": "Failed to fetch price history"})
+
+
+@app.get("/watchlist/news")
+def get_watchlist_news(
+    request: Request,
+    limit: int = Query(30, ge=1, le=100),
+    per_asset: int = Query(5, ge=1, le=10),
+    locale: str = Query("en"),
+) -> dict:
+    user = getattr(request.state, "user", None) or {}
+    owner_id = user.get("sub")
+    admin = _get_supabase_admin()
+
+    if not admin or not _is_valid_uuid(owner_id):
+        return {
+            "read_only": True,
+            "owner": user,
+            "source": "gnews",
+            "items": [],
+            "message": "News requires a verified user session and configured Supabase.",
+        }
+
+    if not os.getenv("GNEWS_API_KEY", "").strip():
+        return {
+            "read_only": False,
+            "owner": user,
+            "source": "gnews",
+            "items": [],
+            "message": "Set GNEWS_API_KEY to enable watchlist news.",
+        }
+
+    try:
+        watchlist_payload = get_watchlist(request)
+        raw_items = watchlist_payload.get("items", []) if isinstance(watchlist_payload, dict) else []
+        candidates = raw_items[:15]
+
+        dedup: dict[str, dict] = {}
+        for item in candidates:
+            asset = item.get("asset", {}) if isinstance(item, dict) else {}
+            symbol = str(asset.get("symbol", "")).strip().upper()
+            name = str(asset.get("name", "")).strip()
+            if not symbol:
+                continue
+
+            query = f'"{symbol}" OR "{name}"'
+            try:
+                articles = _fetch_gnews_articles(query=query, max_items=per_asset, locale=locale)
+            except Exception as e:
+                logger.warning(f"News fetch failed for {symbol}: {e}")
+                continue
+
+            for article in articles:
+                url = str(article.get("url", "")).strip()
+                if not url or url in dedup:
+                    continue
+                dedup[url] = {
+                    "symbol": symbol,
+                    "asset_name": name,
+                    "title": article.get("title"),
+                    "description": article.get("description"),
+                    "url": url,
+                    "published_at": article.get("publishedAt"),
+                    "source": (article.get("source") or {}).get("name"),
+                    "image": article.get("image"),
+                }
+
+        items = sorted(
+            dedup.values(),
+            key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
+            reverse=True,
+        )[:limit]
+
+        return {
+            "read_only": False,
+            "owner": user,
+            "source": "gnews",
+            "items": items,
+            "message": "ok",
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch watchlist news: {e}")
+        return JSONResponse(status_code=500, content={"detail": "Failed to fetch watchlist news"})
 
