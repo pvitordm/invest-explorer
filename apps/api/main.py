@@ -478,6 +478,27 @@ def _normalize_news_item(
     source: str | None,
     image: str | None,
 ) -> dict | None:
+    def _normalize_source(value) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            clean = value.strip()
+            return clean or None
+        if isinstance(value, dict):
+            for key in ("displayName", "name", "sourceId", "site"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return None
+        if isinstance(value, list):
+            for item in value:
+                normalized = _normalize_source(item)
+                if normalized:
+                    return normalized
+            return None
+        as_text = str(value).strip()
+        return as_text or None
+
     clean_url = str(url or "").strip()
     clean_title = str(title or "").strip()
     if not clean_url or not clean_title:
@@ -490,7 +511,7 @@ def _normalize_news_item(
         "description": (description or "").strip() or None,
         "url": clean_url,
         "published_at": published_at,
-        "source": source,
+        "source": _normalize_source(source),
         "image": image,
         "provider": provider,
     }

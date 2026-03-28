@@ -301,6 +301,17 @@ function resolveNewsEmptyStateMessage(message: string | undefined, locale: Local
   return message as string;
 }
 
+function formatNewsSourceLabel(source: unknown): string {
+  if (!source) return "";
+  if (typeof source === "string") return source.trim();
+  if (typeof source === "object") {
+    const row = source as Record<string, unknown>;
+    const candidate = row.displayName ?? row.name ?? row.sourceId;
+    return typeof candidate === "string" ? candidate : "";
+  }
+  return "";
+}
+
 export default function HomePage() {
   const selectedAssetCardRef = useRef<HTMLDivElement | null>(null);
   const [locale, setLocale] = useState<Locale>("pt-BR");
@@ -984,7 +995,7 @@ export default function HomePage() {
                 <article key={`${item.symbol}-${item.url}`} className="news-item">
                   <p className="news-meta muted">
                     <strong>{item.symbol}</strong>
-                    {item.source ? ` • ${item.source}` : ""}
+                    {formatNewsSourceLabel(item.source) ? ` • ${formatNewsSourceLabel(item.source)}` : ""}
                     {item.published_at ? ` • ${formatDateTimeInBrazil(item.published_at, locale)}` : ""}
                   </p>
                   <a href={item.url} target="_blank" rel="noreferrer" className="news-title">{item.title}</a>
