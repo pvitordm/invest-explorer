@@ -1,4 +1,4 @@
-const CACHE_NAME = "invest-explorer-v2";
+const CACHE_NAME = "invest-explorer-v3";
 const APP_SHELL = ["/", "/manifest.webmanifest"];
 
 function shouldCache(request, url) {
@@ -10,6 +10,10 @@ function shouldCache(request, url) {
 
   // Avoid caching Next.js data payloads that are tightly coupled to app version.
   if (url.pathname.startsWith("/_next/data/")) return false;
+
+  // Avoid caching script/style chunks to prevent stale UI after deployments.
+  if (url.pathname.startsWith("/_next/static/")) return false;
+  if (["script", "style", "worker"].includes(request.destination)) return false;
 
   return true;
 }
@@ -43,26 +47,6 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(() => caches.match("/"))
-    );
-    return;
-  }
-
-  // Static bundles use stale-while-revalidate for fast loads plus fresh updates.
-  if (url.pathname.startsWith("/_next/static/") || ["script", "style", "font", "worker"].includes(request.destination)) {
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        const networkFetch = fetch(request)
-          .then((response) => {
-            if (response && response.ok) {
-              const cloned = response.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(request, cloned));
-            }
-            return response;
-          })
-          .catch(() => cached);
-
-        return cached || networkFetch;
-      })
     );
     return;
   }

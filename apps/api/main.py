@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError
 
 from dotenv import load_dotenv
@@ -276,7 +276,7 @@ def _safe_parse_datetime(value: str | None) -> datetime:
 
 
 def _http_get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 12) -> dict | list | None:
-    req = Request(url, headers={"User-Agent": "invest-explorer/1.0", **(headers or {})})
+    req = UrlRequest(url, headers={"User-Agent": "invest-explorer/1.0", **(headers or {})})
     with urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -421,9 +421,70 @@ def _fetch_gnews_articles(symbol: str, asset_name: str, max_items: int, locale: 
 
     language = "pt" if locale.lower().startswith("pt") else "en"
     endpoint = "https://gnews.io/api/v4/search"
-    from_date = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _run_query(query: str, remaining: int) -> list[dict]:
+        params = {
+            "q": query,
+            "lang": language,
+            "sortby": "publishedAt",
+            "max": max(1, min(remaining, 10)),
+            "from": from_date,
+            "apikey": api_key,
+        }
+        try:
+            payload = _http_get_json(f"{endpoint}?{urlencode(params)}")
+        except Exception:
+            return []
+
+        rows = payload.get("articles", []) if isinstance(payload, dict) else []
+        batch: list[dict] = []
+        for row in rows:
+            article = _normalize_news_item(
+                provider="gnews",
+                symbol=symbol,
+                asset_name=asset_name,
+                title=row.get("title"),
+                description=row.get("description"),
+                url=row.get("url"),
+                published_at=row.get("publishedAt"),
+                source=(row.get("source") or {}).get("name"),
+                image=row.get("image"),
+            )
+            if article:
+                batch.append(article)
+        return batch
+
+    dedup: dict[str, dict] = {}
+    queries = [
+        f'"{symbol}" OR "{asset_name}"',
+        f'"{asset_name}" stock OR market',
+        symbol,
+    ]
+
+    for query in queries:
+        remaining = max_items - len(dedup)
+        if remaining <= 0:
+            break
+        for article in _run_query(query, remaining):
+            url = str(article.get("url", "")).strip()
+            if url and url not in dedup:
+                dedup[url] = article
+
+    return list(dedup.values())[:max_items]
+
+
+def _fetch_market_fallback_news(max_items: int, locale: str = "en") -> list[dict]:
+    api_key = os.getenv("GNEWS_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    language = "pt" if locale.lower().startswith("pt") else "en"
+    endpoint = "https://gnews.io/api/v4/search"
+    from_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    query = "stock market OR investing OR finance"
     params = {
-        "q": f'"{symbol}" OR "{asset_name}"',
+        "q": query,
         "lang": language,
         "sortby": "publishedAt",
         "max": max(1, min(max_items, 10)),
@@ -441,8 +502,8 @@ def _fetch_gnews_articles(symbol: str, asset_name: str, max_items: int, locale: 
     for row in rows:
         article = _normalize_news_item(
             provider="gnews",
-            symbol=symbol,
-            asset_name=asset_name,
+            symbol="MKT",
+            asset_name="Market",
             title=row.get("title"),
             description=row.get("description"),
             url=row.get("url"),
@@ -943,6 +1004,18 @@ def get_watchlist_news(
             key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
             reverse=True,
         )[:limit]
+
+        if not items and has_gnews:
+            fallback_news = _fetch_market_fallback_news(limit, locale=locale)
+            for article in fallback_news:
+                url = str(article.get("url", "")).strip()
+                if url and url not in dedup:
+                    dedup[url] = article
+            items = sorted(
+                dedup.values(),
+                key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
+                reverse=True,
+            )[:limit]
 
         return {
             "read_only": False,
