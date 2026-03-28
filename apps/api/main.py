@@ -26,7 +26,7 @@ try:
 except ImportError:
     JWT_AVAILABLE = False
 
-load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
 logger = logging.getLogger(__name__)
 
 _supabase_admin_client: Client | None = None
@@ -516,11 +516,14 @@ class SupabaseJWTMiddleware(BaseHTTPMiddleware):
                 logger.warning(f"JWT verification failed ({type(e).__name__}): {e}. Using fallback.")
         
         # Fallback: accept token without verification (dev mode)
+        # Use a fixed UUID for dev mode to pass UUID validation in endpoints
+        DEV_USER_UUID = "00000000-0000-0000-0000-000000000001"
         request.state.user = {
-            "sub": "anonymous-dev",
+            "sub": DEV_USER_UUID,
             "role": "authenticated",
             "token_preview": f"{token[:8]}...",
             "verified_jwt": False,
+            "dev_mode": True,
         }
         logger.info(f"Token accepted in fallback mode (dev)")
         return await call_next(request)
@@ -873,6 +876,23 @@ def get_watchlist_news(
     try:
         watchlist_payload = get_watchlist(request)
         raw_items = watchlist_payload.get("items", []) if isinstance(watchlist_payload, dict) else []
+        
+        # In dev mode (when JWT is not verified), use curated assets if watchlist is empty
+        is_dev_mode = not user.get("verified_jwt", False)
+        if not raw_items and is_dev_mode:
+            logger.info("Dev mode: using curated assets for news since watchlist is empty")
+            raw_items = [
+                {
+                    "asset": {
+                        "name": asset.name,
+                        "symbol": asset.symbol,
+                        "exchange": asset.exchange,
+                        "currency": asset.currency,
+                    }
+                }
+                for asset in CURATED_ASSETS[:10]  # Use first 10 curated assets
+            ]
+        
         candidates = raw_items[:15]
 
         dedup: dict[str, dict] = {}

@@ -8,6 +8,7 @@ Web rodando em: http://localhost:3000
 ## Fluxo de Teste (5 minutos)
 
 ### 1. Login Anônimo
+
 ```
 1. Abrir http://localhost:3000 no navegador
 2. Scroll para "Configurações"
@@ -16,6 +17,7 @@ Web rodando em: http://localhost:3000
 ```
 
 ### 2. Atualizar Snapshot
+
 ```
 1. Clicar em "Atualizar agora" (no topo)
 2. Aguardar 5-10 segundos (está buscando preços ao vivo do yfinance)
@@ -24,6 +26,7 @@ Web rodando em: http://localhost:3000
 ```
 
 ### 3. Visualizar Ativos
+
 ```
 Explorar → Deve aparecer 4 seções:
 - Top BR: Petrobras (PETR4), Vale (VALE3), etc
@@ -39,6 +42,7 @@ Cada ativo mostra:
 ```
 
 ### 4. Teste Offline (Opcional)
+
 ```
 1. Desligar internet / Devtools > Network > Offline
 2. Atualizar página
@@ -48,6 +52,7 @@ Cada ativo mostra:
 ```
 
 ### 5. Language Toggle
+
 ```
 1. Em Configurações, mudar idioma para "English"
 2. Verificar se todos os textos mudam para inglês
@@ -57,19 +62,23 @@ Cada ativo mostra:
 ## O que esperar em cada aba
 
 ### Configurações
+
 - Status da sessão (ativo/inativo)
 - Seletor de idioma pt-BR/en
 - Botão de login anônimo
 
 ### Últimos Ativos Vistos
+
 - Lista vazia no início
 - Popula conforme clica em "Ver ativo" nos ativos
 
 ### Watchlist
+
 - Integrada com Supabase (vazio por enquanto em dev)
 - Será preenchido após implementar edição
 
 ### Explorar
+
 - 4 seções (Top BR/US/JP/Crypto)
 - ~20 ativos com "Ver ativo" para cada um
 - Preços em BRL com valuation
@@ -77,6 +86,7 @@ Cada ativo mostra:
 ## Status Esperado (MVP v1)
 
 ✅ Funcional:
+
 - Login anônimo Supabase
 - Refresh de snapshot (20 ativos ao vivo via yfinance)
 - Display de preços + valuation em BRL
@@ -84,6 +94,7 @@ Cada ativo mostra:
 - Offline banner + read-only mode
 
 ❌ Ainda não pronto:
+
 - Supabase: salvar snapshots (usar fallback por enquanto)
 - Watchlist: edição (only viewing structure)
 - Portfolio: não implementado
@@ -107,12 +118,12 @@ python d:\invest-explorer\test_integration.py
 
 ## Troubleshooting
 
-| Problema | Solução |
-|----------|---------|
-| "Falha ao carregar watchlist da API" | Normal em dev, API retorna vazio |
-| Preços não atualizam | Verificar conexão internet / yfinance rate limits |
-| Web mostra "Sem sessão ativa" | Clicar "Entrar anonimamente" primeiro |
-| "Você está offline" mas tem internet | Devtools > Desabilitar "Offline" |
+| Problema                             | Solução                                           |
+| ------------------------------------ | ------------------------------------------------- |
+| "Falha ao carregar watchlist da API" | Normal em dev, API retorna vazio                  |
+| Preços não atualizam                 | Verificar conexão internet / yfinance rate limits |
+| Web mostra "Sem sessão ativa"        | Clicar "Entrar anonimamente" primeiro             |
+| "Você está offline" mas tem internet | Devtools > Desabilitar "Offline"                  |
 
 ---
 

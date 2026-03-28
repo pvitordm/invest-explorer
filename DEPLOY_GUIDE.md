@@ -25,14 +25,14 @@
 
 ### 1.2 Configurar serviço
 
-| Campo | Valor |
-|-------|-------|
-| **Repository** | `pvitordm/invest-explorer` |
-| **Root Directory** | `apps/api` |
-| **Runtime** | `Python 3` |
-| **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
-| **Environment** | Select `Python` |
+| Campo              | Valor                                          |
+| ------------------ | ---------------------------------------------- |
+| **Repository**     | `pvitordm/invest-explorer`                     |
+| **Root Directory** | `apps/api`                                     |
+| **Runtime**        | `Python 3`                                     |
+| **Build Command**  | `pip install -r requirements.txt`              |
+| **Start Command**  | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| **Environment**    | Select `Python`                                |
 
 ### 1.3 Variáveis de Ambiente
 
@@ -48,6 +48,7 @@ ALLOWED_ORIGINS=https://<seu-dominio-cloudflare-pages>.pages.dev,http://localhos
 ```
 
 > **Onde encontrar no Supabase:**
+>
 > 1. Ir para https://app.supabase.com
 > 2. Selecionar projeto "invest-explorer"
 > 3. Settings (⚙️) > API
@@ -66,8 +67,9 @@ curl https://invest-explorer-api.onrender.com/health
 ```
 
 Esperado:
+
 ```json
-{"status": "ok", "service": "invest-explorer-api"}
+{ "status": "ok", "service": "invest-explorer-api" }
 ```
 
 ---
@@ -87,12 +89,12 @@ Cloudflare Pages auto-detecta Next.js. Precisamos só configurar env vars.
 
 ### 2.3 Configurar build
 
-| Campo | Valor |
-|-------|-------|
-| **Framework** | `Next.js` |
-| **Build command** | `cd apps/web && npm install && npm run build` |
-| **Build output directory** | `apps/web/.next/export` |
-| **Root directory** | `/` (raiz do monorepo) |
+| Campo                      | Valor                                         |
+| -------------------------- | --------------------------------------------- |
+| **Framework**              | `Next.js`                                     |
+| **Build command**          | `cd apps/web && npm install && npm run build` |
+| **Build output directory** | `apps/web/.next/export`                       |
+| **Root directory**         | `/` (raiz do monorepo)                        |
 
 ### 2.4 Variáveis de Ambiente
 
@@ -115,6 +117,7 @@ NEXT_PUBLIC_API_BASE_URL=https://invest-explorer-api.onrender.com
 Abrir no navegador: `https://invest-explorer-xxx.pages.dev`
 
 Esperado:
+
 - Página carrega
 - Pode clicar "Entrar anonimamente"
 - Botão "Atualizar agora" funciona
@@ -156,6 +159,7 @@ https://invest-explorer-xxx.pages.dev
 5. Verificar se dados aparecem em Explorar
 
 **Esperado:**
+
 ```
 ✓ Login anônimo Supabase
 ✓ 20 ativos carregados
@@ -166,12 +170,14 @@ https://invest-explorer-xxx.pages.dev
 ### 4.3 Verificar Logs
 
 **Render:**
+
 ```bash
 # In Render Dashboard
 Logs → procurar por erros
 ```
 
 **Cloudflare Pages:**
+
 ```bash
 # In Cloudflare Dashboard > Pages
 Deployments → clicar no último
@@ -182,13 +188,13 @@ View logs → procurar por erros
 
 ## 🛠️ Troubleshooting
 
-| Erro | Causa | Solução |
-|------|-------|---------|
-| `502 Bad Gateway` | Build falhou | Verificar Render logs |
-| `401 Unauthorized` | Token Supabase inválido | Verificar ALLOWED_ORIGINS |
-| "Cannot find module" | Dependências não instaladas | Verify requirements.txt |
-| Web não carrega | Cloudflare Pages build falhou | Verificar output directory |
-| "Failed to fetch" | CORS não configurado | Atualizar ALLOWED_ORIGINS |
+| Erro                 | Causa                         | Solução                    |
+| -------------------- | ----------------------------- | -------------------------- |
+| `502 Bad Gateway`    | Build falhou                  | Verificar Render logs      |
+| `401 Unauthorized`   | Token Supabase inválido       | Verificar ALLOWED_ORIGINS  |
+| "Cannot find module" | Dependências não instaladas   | Verify requirements.txt    |
+| Web não carrega      | Cloudflare Pages build falhou | Verificar output directory |
+| "Failed to fetch"    | CORS não configurado          | Atualizar ALLOWED_ORIGINS  |
 
 ---
 
@@ -239,10 +245,12 @@ PRODUTO:
 ## 🚀 Deploy Concluído!
 
 App está agora em produção:
-- **Web:** `https://invest-explorer-xxx.pages.dev` 
+
+- **Web:** `https://invest-explorer-xxx.pages.dev`
 - **API:** `https://invest-explorer-api.onrender.com`
 
 Próximos passos:
+
 - Monitorar logs
 - Testar em mobile
 - Considerar custom domain
