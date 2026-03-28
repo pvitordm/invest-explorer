@@ -32,6 +32,8 @@ type ChartDatum = {
   value: number;
 };
 
+const BRAZIL_TIMEZONE = "America/Sao_Paulo";
+
 function pickPointValue(point: ApiPriceHistoryPoint): number | null {
   if (typeof point.valuation_brl === "number") return point.valuation_brl;
   if (typeof point.price === "number") return point.price;
@@ -127,7 +129,11 @@ export function InteractivePriceChart({ points, locale, currency, theme, initial
 
       const unix = typeof param.time === "number" ? param.time : null;
       const label = unix
-        ? new Date(unix * 1000).toLocaleString(locale)
+        ? new Intl.DateTimeFormat(locale, {
+            dateStyle: "short",
+            timeStyle: "medium",
+            timeZone: BRAZIL_TIMEZONE,
+          }).format(new Date(unix * 1000))
         : "-";
 
       setHoverData({

@@ -68,6 +68,7 @@ type HistoryPeriod = "30d" | "90d" | "1y" | "5y" | "custom";
 type ThemePreference = "system" | "light" | "dark";
 
 type MarketOverview = ApiMarketOverviewResponse;
+const BRAZIL_TIMEZONE = "America/Sao_Paulo";
 
 function isoDateDaysAgo(days: number): string {
   const d = new Date();
@@ -250,6 +251,24 @@ function formatPercent(value: number | null, locale: Locale): string {
   if (value === null || Number.isNaN(value)) return "-";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toLocaleString(locale, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatDateTimeInBrazil(value: string, locale: Locale): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: BRAZIL_TIMEZONE,
+  }).format(date);
+}
+
+function resolveNewsEmptyStateMessage(message: string | undefined, locale: Locale): string {
+  const normalized = (message ?? "").trim().toLowerCase();
+  if (!normalized || normalized === "ok") {
+    return locale === "pt-BR" ? "Sem notícias no momento." : "No news right now.";
+  }
+  return message as string;
 }
 
 export default function HomePage() {
@@ -478,7 +497,7 @@ export default function HomePage() {
         setNewsStatusMessage(
           response.items && response.items.length > 0
             ? ""
-            : response.message || (locale === "pt-BR" ? "Sem notícias no momento." : "No news right now.")
+            : resolveNewsEmptyStateMessage(response.message, locale)
         );
       })
       .catch(() => {
@@ -682,7 +701,7 @@ export default function HomePage() {
       setNewsStatusMessage(
         response.items && response.items.length > 0
           ? ""
-          : response.message || (locale === "pt-BR" ? "Sem notícias no momento." : "No news right now.")
+          : resolveNewsEmptyStateMessage(response.message, locale)
       );
     } catch {
       setNewsItems([]);
@@ -710,7 +729,7 @@ export default function HomePage() {
       {readOnlyMode ? <p className="muted">{msg.readOnlyMode}</p> : null}
       {statusMessage ? <p className="muted">{statusMessage}</p> : null}
       <p className="muted snapshot-line" suppressHydrationWarning>
-        {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {new Date(snapshot.updated_at).toLocaleString(locale)} • {locale === "pt-BR" ? "Base" : "Base"}: BRL
+        {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {formatDateTimeInBrazil(snapshot.updated_at, locale)} ({locale === "pt-BR" ? "UTC-3" : "UTC-3"}) • {locale === "pt-BR" ? "Base" : "Base"}: BRL
       </p>
 
       {marketOverview ? (
@@ -723,7 +742,7 @@ export default function HomePage() {
               </p>
             </div>
             <p className="muted highlights-updated" suppressHydrationWarning>
-              {new Date(marketOverview.summary.updated_at).toLocaleString(locale)}
+              {formatDateTimeInBrazil(marketOverview.summary.updated_at, locale)} ({locale === "pt-BR" ? "UTC-3" : "UTC-3"})
             </p>
           </div>
 
@@ -929,7 +948,7 @@ export default function HomePage() {
                   <p className="news-meta muted">
                     <strong>{item.symbol}</strong>
                     {item.source ? ` • ${item.source}` : ""}
-                    {item.published_at ? ` • ${new Date(item.published_at).toLocaleString(locale)}` : ""}
+                    {item.published_at ? ` • ${formatDateTimeInBrazil(item.published_at, locale)}` : ""}
                   </p>
                   <a href={item.url} target="_blank" rel="noreferrer" className="news-title">{item.title}</a>
                   {item.description ? <p className="muted">{item.description}</p> : null}
