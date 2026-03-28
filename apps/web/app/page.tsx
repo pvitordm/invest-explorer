@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { OfflineBanner } from "@/components/OfflineBanner";
+import { InteractivePriceChart } from "@/components/InteractivePriceChart";
 import {
   addWatchlistItem,
   fetchPriceHistory,
@@ -184,25 +185,6 @@ function formatPercent(value: number | null, locale: Locale): string {
   if (value === null || Number.isNaN(value)) return "-";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toLocaleString(locale, { maximumFractionDigits: 2 })}%`;
-}
-
-function buildSparkline(points: ApiPriceHistoryPoint[], width: number, height: number): string {
-  const values = points.map(pickPointValue).filter((v): v is number => typeof v === "number");
-  if (values.length < 2) return "";
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const stepX = width / (values.length - 1);
-
-  return values
-    .map((value, index) => {
-      const x = index * stepX;
-      const normalized = (value - min) / span;
-      const y = height - normalized * height;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
 }
 
 export default function HomePage() {
@@ -612,9 +594,7 @@ export default function HomePage() {
             <p className="muted">{locale === "pt-BR" ? "Sem pontos suficientes para gráfico." : "Not enough points for chart."}</p>
           ) : (
             <>
-              <svg className="history-chart" viewBox="0 0 600 180" preserveAspectRatio="none">
-                <polyline fill="none" stroke="currentColor" strokeWidth="2" points={buildSparkline(historyPoints, 600, 180)} />
-              </svg>
+              <InteractivePriceChart points={historyPoints} locale={locale} currency="BRL" />
               <div className="history-metrics muted">
                 <span>{msg.dailyChange}: <strong className={(calcChangePct(historyPoints, 1) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 1), locale)}</strong></span>
                 <span>{msg.weeklyChange}: <strong className={(calcChangePct(historyPoints, 7) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 7), locale)}</strong></span>

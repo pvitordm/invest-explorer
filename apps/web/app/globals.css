@@ -98,6 +98,42 @@ main {
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.03), rgba(0, 0, 0, 0));
 }
 
+.interactive-chart-wrap {
+  position: relative;
+  margin-top: 1rem;
+}
+
+.interactive-chart {
+  width: 100%;
+  height: 300px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.interactive-chart-tooltip {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 2;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  color: var(--ink);
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(27, 55, 88, 0.08);
+}
+
+.interactive-chart-tooltip span {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 .history-metrics {
   margin-top: 0.8rem;
   display: flex;
