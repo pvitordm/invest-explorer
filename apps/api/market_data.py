@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 import yfinance as yf
 
@@ -75,7 +76,13 @@ FALLBACK_CURRENCY_RATES_TO_BRL: dict[str, float] = {
 
 
 def _latest_close(symbol: str) -> float | None:
-    history = yf.Ticker(symbol).history(period="5d", interval="1d", auto_adjust=False)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(lambda: yf.Ticker(symbol).history(period="5d", interval="1d", auto_adjust=False))
+            history = future.result(timeout=5)
+    except (FuturesTimeoutError, Exception):
+        return None
+    
     if history.empty or "Close" not in history:
         return None
     closes = history["Close"].dropna()
@@ -85,10 +92,14 @@ def _latest_close(symbol: str) -> float | None:
 
 
 def get_fx_rates_to_brl() -> dict[str, float]:
-    usd_brl = _latest_close("BRL=X")
-    usd_jpy = _latest_close("JPY=X")
-    eur_brl = _latest_close("EURBRL=X")
-    gbp_brl = _latest_close("GBPBRL=X")
+    symbols = ["BRL=X", "JPY=X", "EURBRL=X", "GBPBRL=X"]
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = dict(zip(symbols, executor.map(_latest_close, symbols)))
+    
+    usd_brl = results["BRL=X"]
+    usd_jpy = results["JPY=X"]
+    eur_brl = results["EURBRL=X"]
+    gbp_brl = results["GBPBRL=X"]
 
     if usd_brl is None:
         usd_brl = FALLBACK_CURRENCY_RATES_TO_BRL["USD"]
@@ -124,8 +135,13 @@ def build_live_snapshot_payload() -> dict[str, Any]:
     assets_payload: list[dict[str, Any]] = []
     live_count = 0
 
+    # Fetch all asset prices in parallel
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        yahoo_symbols = [asset.yahoo_symbol for asset in CURATED_ASSETS]
+        prices = dict(zip(yahoo_symbols, executor.map(_latest_close, yahoo_symbols)))
+
     for asset in CURATED_ASSETS:
-        live_price = _latest_close(asset.yahoo_symbol)
+        live_price = prices.get(asset.yahoo_symbol)
         price = live_price if live_price is not None else FALLBACK_PRICES.get(asset.symbol)
         if live_price is not None:
             live_count += 1

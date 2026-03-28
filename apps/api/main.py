@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
@@ -687,9 +688,21 @@ def _fetch_yfinance_articles(symbol: str, exchange: str, asset_name: str, max_it
         candidates.append(f"{symbol}.SA")
 
     dedup: dict[str, dict] = {}
+    
+    # Helper function to fetch news with timeout
+    def fetch_news_with_timeout(ticker_symbol: str, timeout_secs: int = 5) -> list[dict]:
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(lambda: getattr(yf.Ticker(ticker_symbol), "news", None) or [])
+                rows = future.result(timeout=timeout_secs)
+                return rows if rows else []
+        except (FuturesTimeoutError, Exception) as e:
+            logger.debug(f"yfinance news fetch timeout/error for {ticker_symbol}: {e}")
+            return []
+    
     for candidate in candidates:
         try:
-            rows = getattr(yf.Ticker(candidate), "news", None) or []
+            rows = fetch_news_with_timeout(candidate, timeout_secs=5)
         except Exception:
             rows = []
 
@@ -797,6 +810,7 @@ def _fetch_market_headline(locale: str = "en") -> dict | None:
         return direct[0]
 
     # If market-wide providers are empty, derive a headline from featured assets.
+    # Stop at the first asset that returns any result to avoid slow cascades.
     featured_assets = [
         ("PETR4", "B3", "Petrobras PN"),
         ("AAPL", "NASDAQ", "Apple Inc."),
@@ -805,20 +819,12 @@ def _fetch_market_headline(locale: str = "en") -> dict | None:
         ("ETH", "CRYPTO", "Ethereum"),
     ]
 
-    candidates: list[dict] = []
     for symbol, exchange, name in featured_assets:
-        items = _collect_asset_news(symbol, exchange, name, 2, locale=locale)
-        candidates.extend(items)
+        items = _collect_asset_news(symbol, exchange, name, 1, locale=locale)
+        if items:
+            return items[0]
 
-    if not candidates:
-        return None
-
-    ordered = sorted(
-        candidates,
-        key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
-        reverse=True,
-    )
-    return ordered[0]
+    return None
 
 
 def _collect_asset_news(symbol: str, exchange: str, asset_name: str, limit: int, locale: str = "en") -> list[dict]:
@@ -1357,7 +1363,12 @@ def get_market_overview(
         featured_symbols = ["PETR4", "AAPL", "NVDA", "BTC", "ETH"]
         featured_assets = [asset for asset in assets if str(asset.get("symbol", "")).upper() in featured_symbols]
         featured_assets = sorted(featured_assets, key=lambda asset: featured_symbols.index(str(asset.get("symbol", "")).upper()))
-        headline = _fetch_market_headline(locale=locale)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_market_headline, locale)
+                headline = future.result(timeout=8)
+        except (FuturesTimeoutError, Exception):
+            headline = None
         latest_data_at = _latest_data_updated_at(admin) or payload.get("updated_at")
         return {
             "read_only": False,
