@@ -89,6 +89,7 @@ export function InteractivePriceChart({ points, locale, currency, theme, initial
         borderColor: isDark ? "#2a425a" : "#d6e0eb",
         timeVisible: true,
         secondsVisible: false,
+        fixLeftEdge: true,
         fixRightEdge: true,
         rightOffset: 0
       },

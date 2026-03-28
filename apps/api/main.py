@@ -421,6 +421,23 @@ def _safe_parse_datetime(value: str | None) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _unique_points_from_desc(rows: list[dict], limit: int) -> list[dict]:
+    seen: set[str] = set()
+    picked: list[dict] = []
+    for row in rows:
+        key = str(row.get("collected_at") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        picked.append(row)
+        if len(picked) >= limit:
+            break
+    return sorted(
+        picked,
+        key=lambda r: _safe_parse_datetime(str(r.get("collected_at") or "")),
+    )
+
+
 def _http_get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 12) -> dict | list | None:
     req = UrlRequest(url, headers={"User-Agent": "invest-explorer/1.0", **(headers or {})})
     with urlopen(req, timeout=timeout) as response:
@@ -1109,28 +1126,57 @@ def get_price_history(
         if parsed_start or parsed_end:
             effective_period = "custom"
 
-        query = (
-            admin.table("price_history")
-            .select("collected_at,price,valuation_brl,currency,fx_to_brl,data_quality")
-            .eq("owner_id", owner_id)
-            .eq("asset_id", asset["id"])
+        lower_bound_iso = parsed_start.isoformat() if parsed_start else _period_to_start(period).isoformat()
+        upper_bound_iso = parsed_end.isoformat() if parsed_end else None
+
+        def _build_history_query(include_owner: bool):
+            query = (
+                admin.table("price_history")
+                .select("collected_at,price,valuation_brl,currency,fx_to_brl,data_quality")
+                .eq("asset_id", asset["id"])
+                .gte("collected_at", lower_bound_iso)
+            )
+            if upper_bound_iso:
+                query = query.lte("collected_at", upper_bound_iso)
+            if include_owner:
+                query = query.eq("owner_id", owner_id)
+            return query
+
+        owner_rows = (
+            _build_history_query(include_owner=True)
+            .order("collected_at", desc=False)
+            .limit(limit)
+            .execute()
+            .data
+            or []
         )
 
-        if parsed_start:
-            query = query.gte("collected_at", parsed_start.isoformat())
-        else:
-            query = query.gte("collected_at", _period_to_start(period).isoformat())
+        rows = owner_rows
+        history_source = "owner"
 
-        if parsed_end:
-            query = query.lte("collected_at", parsed_end.isoformat())
+        if parsed_end is None:
+            latest_owner = _safe_parse_datetime(str(owner_rows[-1].get("collected_at") or "")) if owner_rows else datetime.min.replace(tzinfo=timezone.utc)
+            shared_desc = (
+                _build_history_query(include_owner=False)
+                .order("collected_at", desc=True)
+                .limit(min(20000, max(limit * 5, limit)))
+                .execute()
+                .data
+                or []
+            )
+            shared_rows = _unique_points_from_desc(shared_desc, limit)
+            latest_shared = _safe_parse_datetime(str(shared_rows[-1].get("collected_at") or "")) if shared_rows else datetime.min.replace(tzinfo=timezone.utc)
 
-        rows = query.order("collected_at", desc=False).limit(limit).execute().data or []
+            if shared_rows and (not owner_rows or latest_shared > latest_owner + timedelta(hours=24)):
+                rows = shared_rows
+                history_source = "shared_fallback"
 
         return {
             "read_only": False,
             "owner": user,
             "asset": asset,
             "period": effective_period,
+            "history_source": history_source,
             "points": rows,
         }
     except Exception as e:
