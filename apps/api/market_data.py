@@ -104,7 +104,7 @@ def get_fx_rates_to_brl() -> dict[str, float]:
     if usd_brl is None:
         usd_brl = FALLBACK_CURRENCY_RATES_TO_BRL["USD"]
 
-    jpy_brl = (usd_brl / usd_jpy) if usd_jpy else FALLBACK_CURRENCY_RATES_TO_BRL["JPY"]
+    jpy_brl = (usd_brl / usd_jpy) if usd_jpy and usd_jpy != 0 else FALLBACK_CURRENCY_RATES_TO_BRL["JPY"]
 
     return {
         "BRL": 1.0,

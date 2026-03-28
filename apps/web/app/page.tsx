@@ -452,10 +452,26 @@ export default function HomePage() {
       try {
         const supabase = getSupabaseClient();
 
-        supabase.auth.getSession().then(({ data }) => {
-          setIsAuthenticated(Boolean(data.session?.access_token));
+        supabase.auth.getSession().then(async ({ data }) => {
+          if (data.session?.access_token) {
+            setIsAuthenticated(true);
+          } else {
+            // No existing session – auto sign-in anonymously
+            try {
+              const { error } = await supabase.auth.signInAnonymously();
+              if (!error) {
+                setIsAuthenticated(true);
+              }
+            } catch {
+              // Supabase unreachable – fall back to dev mode
+              setDevMode(true);
+              setIsAuthenticated(true);
+            }
+          }
         }).catch(() => {
-          // Supabase unreachable, already in dev mode
+          // Supabase unreachable – fall back to dev mode
+          setDevMode(true);
+          setIsAuthenticated(true);
         });
 
         const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -697,19 +713,20 @@ export default function HomePage() {
   async function onToggleWatchlist(asset: SnapshotAsset) {
     if (readOnlyMode || !isAuthenticated) return;
     const key = `${asset.exchange}-${asset.symbol}`;
+    const isRemoving = watchlistSet.has(key);
     setWatchlistBusyKey(key);
     try {
-      const response = watchlistSet.has(key)
+      const response = isRemoving
         ? await removeWatchlistItem({ symbol: asset.symbol, exchange: asset.exchange })
         : await addWatchlistItem({ symbol: asset.symbol, exchange: asset.exchange });
       setWatchlistItems(response.items ?? []);
       await setLastWatchlist(response.items ?? []);
       setStatusMessage(
         locale === "pt-BR"
-          ? watchlistSet.has(key)
+          ? isRemoving
             ? "Ativo removido da watchlist."
             : "Ativo adicionado na watchlist."
-          : watchlistSet.has(key)
+          : isRemoving
             ? "Asset removed from watchlist."
             : "Asset added to watchlist."
       );
