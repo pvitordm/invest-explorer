@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { InteractivePriceChart } from "@/components/InteractivePriceChart";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import {
   addWatchlistItem,
   fetchAssetNews,
@@ -777,9 +778,10 @@ export default function HomePage() {
   }
 
   return (
-    <main>
-      <div className="toolbar">
-        <h1>{msg.title}</h1>
+    <ErrorBoundary>
+      <main>
+        <div className="toolbar">
+          <h1>{msg.title}</h1>
         <button onClick={refreshNow} disabled={isOffline || !isAuthenticated || isRefreshing}>
           {isRefreshing
             ? locale === "pt-BR"
@@ -1029,7 +1031,8 @@ export default function HomePage() {
       <Section title={msg.topUS} assets={groupedAssets.us} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
       <Section title={msg.topJP} assets={groupedAssets.jp} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
       <Section title={msg.topCrypto} assets={groupedAssets.crypto} locale={locale} onViewAsset={onViewAsset} viewAssetLabel={msg.viewAsset} readOnlyMode={readOnlyMode} onToggleWatchlist={onToggleWatchlist} watchlistSet={watchlistSet} watchlistBusyKey={watchlistBusyKey} addToWatchlistLabel={msg.addToWatchlist} removeFromWatchlistLabel={msg.removeFromWatchlist} />
-    </main>
+      </main>
+    </ErrorBoundary>
   );
 }
 
