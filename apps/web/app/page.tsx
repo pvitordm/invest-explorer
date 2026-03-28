@@ -223,6 +223,7 @@ export default function HomePage() {
   const [watchlistPerformance, setWatchlistPerformance] = useState<WatchlistPerformance[]>([]);
   const [newsItems, setNewsItems] = useState<ApiWatchlistNewsItem[]>([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
+  const [newsStatusMessage, setNewsStatusMessage] = useState<string>("");
   const readOnlyMode = isOffline;
   const msg = useMemo(() => t(locale), [locale]);
   const groupedAssets = useMemo(() => groupSnapshotAssets(snapshot), [snapshot]);
@@ -336,10 +337,11 @@ export default function HomePage() {
         console.warn("Supabase init failed, using dev mode", e);
       }
     } else if (inDevMode) {
+      setIsAuthenticated(true);
       setStatusMessage(
         locale === "pt-BR"
-          ? "Modo DEV: Supabase não configurado. Use 'Entrar anonimamente' para começar."
-          : "DEV Mode: Supabase not configured. Click 'Sign in anonymously' to start."
+          ? "Modo DEV ativo: sessão local iniciada automaticamente."
+          : "DEV mode active: local session started automatically."
       );
     } else {
       setStatusMessage(
@@ -379,17 +381,41 @@ export default function HomePage() {
   useEffect(() => {
     if (isOffline || !isAuthenticated || watchlistItems.length === 0) {
       setNewsItems([]);
+      setNewsStatusMessage(
+        isOffline
+          ? locale === "pt-BR"
+            ? "Notícias indisponíveis offline."
+            : "News is unavailable while offline."
+          : !isAuthenticated
+            ? locale === "pt-BR"
+              ? "Ative uma sessão para carregar notícias."
+              : "Start a session to load news."
+            : locale === "pt-BR"
+              ? "Adicione ativos à watchlist para ver notícias relacionadas."
+              : "Add assets to the watchlist to see related news."
+      );
       return;
     }
 
     setIsNewsLoading(true);
+    setNewsStatusMessage("");
     fetchWatchlistNews({
       locale,
       limit: 20,
       perAsset: 4
     })
-      .then((response) => setNewsItems(response.items ?? []))
-      .catch(() => setNewsItems([]))
+      .then((response) => {
+        setNewsItems(response.items ?? []);
+        setNewsStatusMessage(
+          response.items && response.items.length > 0
+            ? ""
+            : response.message || (locale === "pt-BR" ? "Sem notícias no momento." : "No news right now.")
+        );
+      })
+      .catch(() => {
+        setNewsItems([]);
+        setNewsStatusMessage(locale === "pt-BR" ? "Falha ao carregar notícias." : "Failed to load news.");
+      })
       .finally(() => setIsNewsLoading(false));
   }, [isOffline, isAuthenticated, watchlistItems, locale]);
 
@@ -571,6 +597,7 @@ export default function HomePage() {
   async function refreshNews() {
     if (isOffline || !isAuthenticated) return;
     setIsNewsLoading(true);
+    setNewsStatusMessage("");
     try {
       const response = await fetchWatchlistNews({
         locale,
@@ -578,8 +605,14 @@ export default function HomePage() {
         perAsset: 4
       });
       setNewsItems(response.items ?? []);
+      setNewsStatusMessage(
+        response.items && response.items.length > 0
+          ? ""
+          : response.message || (locale === "pt-BR" ? "Sem notícias no momento." : "No news right now.")
+      );
     } catch {
       setNewsItems([]);
+      setNewsStatusMessage(locale === "pt-BR" ? "Falha ao carregar notícias." : "Failed to load news.");
     } finally {
       setIsNewsLoading(false);
     }
@@ -696,7 +729,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card" id="relevant-news">
         <div className="news-header">
           <h3>{msg.relevantNews}</h3>
           <button onClick={refreshNews} disabled={isNewsLoading || isOffline || !isAuthenticated}>{msg.refreshNews}</button>
@@ -704,7 +737,7 @@ export default function HomePage() {
         {isNewsLoading ? (
           <p className="muted">{msg.loadingNews}</p>
         ) : newsItems.length === 0 ? (
-          <p className="muted">{msg.noNews}</p>
+          <p className="muted">{newsStatusMessage || msg.noNews}</p>
         ) : (
           <div className="news-list">
             {newsItems.slice(0, 12).map((item) => (
