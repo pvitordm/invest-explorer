@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from market_data import build_currency_rates_payload, build_live_snapshot_payload, CURATED_ASSETS
 from supabase import create_client, Client
+import yfinance as yf
 
 try:
     from jwt import PyJWKClient, decode
@@ -310,6 +311,26 @@ def _get_scheduler_runs(client: Client, limit: int = 10) -> list[dict]:
             return []
         logger.warning(f"Failed to load scheduler run audit: {e}")
         return []
+
+
+def _latest_data_updated_at(client: Client | None) -> str | None:
+    if not client:
+        return None
+    try:
+        rows = (
+            client.table("price_history")
+            .select("collected_at")
+            .order("collected_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if rows:
+            return rows[0].get("collected_at")
+    except Exception as e:
+        logger.warning(f"Failed to get latest data timestamp: {e}")
+    return None
 
 
 def _parse_scheduler_brt_times(raw: str | None) -> list[tuple[int, int]]:
@@ -639,6 +660,74 @@ def _fetch_gnews_articles(symbol: str, asset_name: str, max_items: int, locale: 
     return list(dedup.values())[:max_items]
 
 
+def _fetch_yfinance_articles(symbol: str, exchange: str, asset_name: str, max_items: int) -> list[dict]:
+    candidates = [symbol]
+    if exchange.upper() == "B3":
+        candidates.append(f"{symbol}.SA")
+
+    dedup: dict[str, dict] = {}
+    for candidate in candidates:
+        try:
+            rows = getattr(yf.Ticker(candidate), "news", None) or []
+        except Exception:
+            rows = []
+
+        for row in rows:
+            content = row.get("content") if isinstance(row, dict) else None
+            url = None
+            title = None
+            summary = None
+            source = None
+            published_at = None
+
+            if isinstance(content, dict):
+                click = content.get("clickThroughUrl") or {}
+                canonical = click.get("url") if isinstance(click, dict) else None
+                title = content.get("title")
+                summary = content.get("summary")
+                source = content.get("provider")
+                pub_ms = content.get("pubDate")
+                if isinstance(pub_ms, (int, float)):
+                    published_at = datetime.fromtimestamp(pub_ms / 1000, tz=timezone.utc).isoformat()
+                url = canonical or content.get("canonicalUrl")
+
+            if not url:
+                url = row.get("link") if isinstance(row, dict) else None
+            if not title:
+                title = row.get("title") if isinstance(row, dict) else None
+            if not summary:
+                summary = row.get("summary") if isinstance(row, dict) else None
+            if not source:
+                source = row.get("publisher") if isinstance(row, dict) else None
+            if not published_at and isinstance(row, dict):
+                epoch = row.get("providerPublishTime")
+                if isinstance(epoch, (int, float)):
+                    published_at = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+            article = _normalize_news_item(
+                provider="yfinance",
+                symbol=symbol,
+                asset_name=asset_name,
+                title=title,
+                description=summary,
+                url=url,
+                published_at=published_at,
+                source=source,
+                image=None,
+            )
+            if article:
+                link = str(article.get("url", "")).strip()
+                if link and link not in dedup:
+                    dedup[link] = article
+            if len(dedup) >= max_items:
+                break
+
+        if dedup:
+            break
+
+    return list(dedup.values())[:max_items]
+
+
 def _fetch_market_fallback_news(max_items: int, locale: str = "en") -> list[dict]:
     api_key = os.getenv("GNEWS_API_KEY", "").strip()
     if not api_key:
@@ -687,6 +776,7 @@ def _collect_asset_news(symbol: str, exchange: str, asset_name: str, limit: int,
     has_gnews = bool(os.getenv("GNEWS_API_KEY", "").strip())
 
     provider_chain = [
+        ("yfinance", lambda remaining: _fetch_yfinance_articles(symbol, exchange, asset_name, remaining)),
         ("finnhub", lambda remaining: _fetch_finnhub_articles(symbol, exchange, asset_name, remaining)),
         ("alphavantage", lambda remaining: _fetch_alpha_vantage_articles(symbol, asset_name, remaining)),
         ("gnews", lambda remaining: _fetch_gnews_articles(symbol, asset_name, remaining, locale=locale)),
@@ -1198,6 +1288,7 @@ def get_market_overview(
 ) -> dict:
     user = getattr(request.state, "user", None) or {}
     try:
+        admin = _get_supabase_admin()
         payload = build_live_snapshot_payload()
         assets = payload.get("assets", []) if isinstance(payload, dict) else []
         featured_symbols = ["PETR4", "AAPL", "NVDA", "BTC", "ETH"]
@@ -1205,6 +1296,7 @@ def get_market_overview(
         featured_assets = sorted(featured_assets, key=lambda asset: featured_symbols.index(str(asset.get("symbol", "")).upper()))
         headline_items = _fetch_market_fallback_news(1, locale=locale)
         headline = headline_items[0] if headline_items else None
+        latest_data_at = _latest_data_updated_at(admin) or payload.get("updated_at")
         return {
             "read_only": False,
             "owner": user,
@@ -1213,6 +1305,7 @@ def get_market_overview(
                 "live_asset_count": payload.get("live_asset_count", 0),
                 "fallback_asset_count": payload.get("fallback_asset_count", 0),
                 "updated_at": payload.get("updated_at"),
+                "data_updated_at": latest_data_at,
             },
             "featured_assets": featured_assets,
             "currency_rates": build_currency_rates_payload(),
@@ -1258,12 +1351,24 @@ def get_asset_news(
         )
         asset_name = asset_row[0].get("name") if asset_row else symbol_norm
         items = _collect_asset_news(symbol_norm, exchange_norm, str(asset_name), limit, locale=locale)
+
+        if not items:
+            items = _fetch_market_fallback_news(limit, locale=locale)
+            if items:
+                return {
+                    "read_only": False,
+                    "owner": user,
+                    "source": "market_fallback",
+                    "items": items,
+                    "message": "No asset-specific news found. Showing general market news.",
+                }
+
         return {
             "read_only": False,
             "owner": user,
-            "source": "finnhub|alphavantage|gnews",
+            "source": "yfinance|finnhub|alphavantage|gnews",
             "items": items,
-            "message": "ok",
+            "message": "ok" if items else "No news available right now.",
         }
     except Exception as e:
         logger.warning(f"Failed to fetch asset news: {e}")

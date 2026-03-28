@@ -118,6 +118,7 @@ export type ApiMarketOverviewResponse = {
     live_asset_count: number;
     fallback_asset_count: number;
     updated_at: string;
+    data_updated_at?: string | null;
   };
   featured_assets: Array<{
     name: string;

@@ -343,8 +343,11 @@ export default function HomePage() {
     [historyPoints, historyPeriod, appliedCustomRange]
   );
   const lastDataUpdatedAt = useMemo(
-    () => pickLatestTimestamp([marketOverview?.summary?.updated_at, snapshot.updated_at]),
-    [marketOverview?.summary?.updated_at, snapshot.updated_at]
+    () => pickLatestTimestamp([
+      marketOverview?.summary?.data_updated_at,
+      snapshot.updated_at,
+    ]),
+    [marketOverview?.summary?.data_updated_at, snapshot.updated_at]
   );
 
   async function loadLatestSnapshot() {
