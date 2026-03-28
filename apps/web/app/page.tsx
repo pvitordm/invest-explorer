@@ -59,7 +59,17 @@ type WatchlistPerformance = {
   changePct: number;
 };
 
-type HistoryPeriod = "30d" | "90d" | "1y" | "5y";
+type HistoryPeriod = "30d" | "90d" | "1y" | "5y" | "custom";
+
+function isoDateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function isoDateToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 const fallbackSnapshot: Snapshot = {
   base_currency: "BRL",
@@ -199,6 +209,9 @@ export default function HomePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [watchlistBusyKey, setWatchlistBusyKey] = useState<string | null>(null);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>("1y");
+  const [customStartDate, setCustomStartDate] = useState<string>(isoDateDaysAgo(180));
+  const [customEndDate, setCustomEndDate] = useState<string>(isoDateToday());
+  const [appliedCustomRange, setAppliedCustomRange] = useState<{ startDate: string; endDate: string } | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<SnapshotAsset | null>(null);
   const [historyPoints, setHistoryPoints] = useState<ApiPriceHistoryPoint[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -329,17 +342,24 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!selectedAsset || isOffline || !isAuthenticated) return;
+
+    if (historyPeriod === "custom" && !appliedCustomRange) {
+      return;
+    }
+
     setIsHistoryLoading(true);
     fetchPriceHistory({
       symbol: selectedAsset.symbol,
       exchange: selectedAsset.exchange,
       period: historyPeriod,
+      startDate: historyPeriod === "custom" ? appliedCustomRange?.startDate : undefined,
+      endDate: historyPeriod === "custom" ? appliedCustomRange?.endDate : undefined,
       limit: 2000
     })
       .then((response) => setHistoryPoints(response.points ?? []))
       .catch(() => setHistoryPoints([]))
       .finally(() => setIsHistoryLoading(false));
-  }, [selectedAsset, historyPeriod, isOffline, isAuthenticated]);
+  }, [selectedAsset, historyPeriod, appliedCustomRange, isOffline, isAuthenticated]);
 
   useEffect(() => {
     if (isOffline || !isAuthenticated || watchlistItems.length === 0) {
@@ -476,6 +496,20 @@ export default function HomePage() {
     }
   }
 
+  function applyCustomRange() {
+    if (!customStartDate || !customEndDate || customStartDate > customEndDate) {
+      setStatusMessage(msg.invalidDateRange);
+      return;
+    }
+
+    setAppliedCustomRange({
+      startDate: customStartDate,
+      endDate: customEndDate
+    });
+    setHistoryPeriod("custom");
+    setStatusMessage("");
+  }
+
   return (
     <main>
       <div className="toolbar">
@@ -580,13 +614,37 @@ export default function HomePage() {
           <div className="history-header">
             <h3>{msg.assetHistory}: {selectedAsset.symbol}</h3>
             <div className="history-periods">
-              {(["30d", "90d", "1y", "5y"] as HistoryPeriod[]).map((p) => (
-                <button key={p} onClick={() => setHistoryPeriod(p)} disabled={isHistoryLoading || p === historyPeriod}>
+              {(["30d", "90d", "1y", "5y"] as Exclude<HistoryPeriod, "custom">[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => {
+                    setHistoryPeriod(p);
+                    setAppliedCustomRange(null);
+                  }}
+                  disabled={isHistoryLoading || p === historyPeriod}
+                >
                   {p.toUpperCase()}
                 </button>
               ))}
+              <button onClick={() => setHistoryPeriod("custom")} disabled={isHistoryLoading || historyPeriod === "custom"}>
+                {msg.customRange}
+              </button>
             </div>
           </div>
+
+          {historyPeriod === "custom" ? (
+            <div className="history-custom-range">
+              <label>
+                {msg.fromDate}
+                <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} max={customEndDate || undefined} />
+              </label>
+              <label>
+                {msg.toDate}
+                <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} min={customStartDate || undefined} />
+              </label>
+              <button onClick={applyCustomRange} disabled={isHistoryLoading}>{msg.applyRange}</button>
+            </div>
+          ) : null}
 
           {isHistoryLoading ? (
             <p className="muted">{locale === "pt-BR" ? "Carregando histórico..." : "Loading history..."}</p>

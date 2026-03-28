@@ -25,6 +25,11 @@ type Messages = {
   dailyChange: string;
   weeklyChange: string;
   monthlyChange: string;
+  customRange: string;
+  fromDate: string;
+  toDate: string;
+  applyRange: string;
+  invalidDateRange: string;
 };
 
 const translations: Record<Locale, Messages> = {
@@ -52,7 +57,12 @@ const translations: Record<Locale, Messages> = {
     noPerformanceYet: "Sem dados de performance ainda.",
     dailyChange: "Variação 1D",
     weeklyChange: "Variação 7D",
-    monthlyChange: "Variação 30D"
+    monthlyChange: "Variação 30D",
+    customRange: "Personalizado",
+    fromDate: "De",
+    toDate: "Até",
+    applyRange: "Aplicar",
+    invalidDateRange: "Selecione um intervalo válido de datas."
   },
   en: {
     title: "Invest Explorer",
@@ -78,7 +88,12 @@ const translations: Record<Locale, Messages> = {
     noPerformanceYet: "No performance data yet.",
     dailyChange: "1D change",
     weeklyChange: "7D change",
-    monthlyChange: "30D change"
+    monthlyChange: "30D change",
+    customRange: "Custom",
+    fromDate: "From",
+    toDate: "To",
+    applyRange: "Apply",
+    invalidDateRange: "Select a valid date range."
   }
 };
 

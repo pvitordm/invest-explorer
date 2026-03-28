@@ -543,6 +543,8 @@ def get_price_history(
     symbol: str = Query(...),
     exchange: str = Query(...),
     period: str = Query("1y"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
     limit: int = Query(5000, ge=1, le=20000),
 ) -> dict:
     user = getattr(request.state, "user", None) or {}
@@ -560,6 +562,28 @@ def get_price_history(
     symbol_norm = symbol.strip().upper()
     exchange_norm = exchange.strip().upper()
 
+    def _parse_query_datetime(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        raw = value.strip()
+        if not raw:
+            return None
+
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                parsed = datetime.strptime(raw, "%Y-%m-%d")
+            except ValueError:
+                return None
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed
+
     try:
         asset_row = (
             admin.table("assets")
@@ -574,25 +598,41 @@ def get_price_history(
             return JSONResponse(status_code=404, content={"detail": f"Asset {symbol_norm}/{exchange_norm} not found"})
 
         asset = asset_row[0]
-        start_iso = _period_to_start(period).isoformat()
-        rows = (
+        parsed_start = _parse_query_datetime(start_date)
+        parsed_end = _parse_query_datetime(end_date)
+        if start_date and not parsed_start:
+            return JSONResponse(status_code=400, content={"detail": "Invalid start_date. Use YYYY-MM-DD or ISO datetime."})
+        if end_date and not parsed_end:
+            return JSONResponse(status_code=400, content={"detail": "Invalid end_date. Use YYYY-MM-DD or ISO datetime."})
+        if parsed_start and parsed_end and parsed_start > parsed_end:
+            return JSONResponse(status_code=400, content={"detail": "start_date must be <= end_date."})
+
+        effective_period = period
+        if parsed_start or parsed_end:
+            effective_period = "custom"
+
+        query = (
             admin.table("price_history")
             .select("collected_at,price,valuation_brl,currency,fx_to_brl,data_quality")
             .eq("owner_id", owner_id)
             .eq("asset_id", asset["id"])
-            .gte("collected_at", start_iso)
-            .order("collected_at", desc=False)
-            .limit(limit)
-            .execute()
-            .data
-            or []
         )
+
+        if parsed_start:
+            query = query.gte("collected_at", parsed_start.isoformat())
+        else:
+            query = query.gte("collected_at", _period_to_start(period).isoformat())
+
+        if parsed_end:
+            query = query.lte("collected_at", parsed_end.isoformat())
+
+        rows = query.order("collected_at", desc=False).limit(limit).execute().data or []
 
         return {
             "read_only": False,
             "owner": user,
             "asset": asset,
-            "period": period,
+            "period": effective_period,
             "points": rows,
         }
     except Exception as e:

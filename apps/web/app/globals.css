@@ -78,6 +78,7 @@ main {
 .history-periods {
   display: inline-flex;
   gap: 0.35rem;
+  flex-wrap: wrap;
 }
 
 .history-periods button {
@@ -139,6 +140,30 @@ main {
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.history-custom-range {
+  margin-top: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.history-custom-range label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.history-custom-range input[type="date"] {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.25rem 0.45rem;
+  color: var(--ink);
+  background: #fff;
 }
 
 .toolbar {

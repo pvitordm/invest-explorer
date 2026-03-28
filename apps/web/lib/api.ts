@@ -143,14 +143,17 @@ export async function removeWatchlistItem(input: WatchlistAssetInput): Promise<A
 export async function fetchPriceHistory(input: {
   symbol: string;
   exchange: string;
-  period?: "30d" | "90d" | "1y" | "5y";
+  period?: "30d" | "90d" | "1y" | "5y" | "custom";
+  startDate?: string;
+  endDate?: string;
   limit?: number;
 }): Promise<ApiPriceHistoryResponse> {
-  const params = new URLSearchParams({
-    symbol: input.symbol,
-    exchange: input.exchange,
-    period: input.period ?? "1y",
-    limit: String(input.limit ?? 1000)
-  });
+  const params = new URLSearchParams();
+  params.set("symbol", input.symbol);
+  params.set("exchange", input.exchange);
+  params.set("period", input.period ?? "1y");
+  params.set("limit", String(input.limit ?? 1000));
+  if (input.startDate) params.set("start_date", input.startDate);
+  if (input.endDate) params.set("end_date", input.endDate);
   return apiRequest<ApiPriceHistoryResponse>(`/price-history?${params.toString()}`, { method: "GET" });
 }
