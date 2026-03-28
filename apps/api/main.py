@@ -8,6 +8,7 @@ from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
@@ -274,7 +275,146 @@ def _safe_parse_datetime(value: str | None) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _fetch_gnews_articles(query: str, max_items: int, locale: str = "en") -> list[dict]:
+def _http_get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 12) -> dict | list | None:
+    req = Request(url, headers={"User-Agent": "invest-explorer/1.0", **(headers or {})})
+    with urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _normalize_news_item(
+    provider: str,
+    symbol: str,
+    asset_name: str,
+    title: str | None,
+    description: str | None,
+    url: str | None,
+    published_at: str | None,
+    source: str | None,
+    image: str | None,
+) -> dict | None:
+    clean_url = str(url or "").strip()
+    clean_title = str(title or "").strip()
+    if not clean_url or not clean_title:
+        return None
+
+    return {
+        "symbol": symbol,
+        "asset_name": asset_name,
+        "title": clean_title,
+        "description": (description or "").strip() or None,
+        "url": clean_url,
+        "published_at": published_at,
+        "source": source,
+        "image": image,
+        "provider": provider,
+    }
+
+
+def _format_alpha_datetime(value: str | None) -> str | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    # Ex.: 20260327T120401
+    try:
+        parsed = datetime.strptime(raw, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+        return parsed.isoformat()
+    except Exception:
+        return value
+
+
+def _fetch_finnhub_articles(symbol: str, exchange: str, asset_name: str, max_items: int) -> list[dict]:
+    api_key = os.getenv("FINNHUB_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    now = datetime.now(timezone.utc).date()
+    from_date = (now - timedelta(days=7)).isoformat()
+    to_date = now.isoformat()
+
+    symbol_candidates = [symbol]
+    if exchange.upper() == "B3":
+        symbol_candidates.append(f"{symbol}.SA")
+
+    items: list[dict] = []
+    for candidate in symbol_candidates:
+        params = {
+            "symbol": candidate,
+            "from": from_date,
+            "to": to_date,
+            "token": api_key,
+        }
+        url = f"https://finnhub.io/api/v1/company-news?{urlencode(params)}"
+        try:
+            payload = _http_get_json(url)
+        except HTTPError:
+            continue
+        except Exception:
+            continue
+
+        rows = payload if isinstance(payload, list) else []
+        for row in rows[: max(1, min(max_items, 10))]:
+            article = _normalize_news_item(
+                provider="finnhub",
+                symbol=symbol,
+                asset_name=asset_name,
+                title=row.get("headline"),
+                description=row.get("summary"),
+                url=row.get("url"),
+                published_at=datetime.fromtimestamp(row.get("datetime", 0), tz=timezone.utc).isoformat() if row.get("datetime") else None,
+                source=row.get("source"),
+                image=row.get("image"),
+            )
+            if article:
+                items.append(article)
+
+        if items:
+            break
+
+    return items[:max_items]
+
+
+def _fetch_alpha_vantage_articles(symbol: str, asset_name: str, max_items: int) -> list[dict]:
+    api_key = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    params = {
+        "function": "NEWS_SENTIMENT",
+        "tickers": symbol,
+        "sort": "LATEST",
+        "limit": max(1, min(max_items, 20)),
+        "apikey": api_key,
+    }
+    url = f"https://www.alphavantage.co/query?{urlencode(params)}"
+
+    try:
+        payload = _http_get_json(url)
+    except Exception:
+        return []
+
+    feed = payload.get("feed", []) if isinstance(payload, dict) else []
+    items: list[dict] = []
+    for row in feed[: max(1, min(max_items, 20))]:
+        article = _normalize_news_item(
+            provider="alphavantage",
+            symbol=symbol,
+            asset_name=asset_name,
+            title=row.get("title"),
+            description=row.get("summary"),
+            url=row.get("url"),
+            published_at=_format_alpha_datetime(row.get("time_published")),
+            source=row.get("source"),
+            image=row.get("banner_image"),
+        )
+        if article:
+            items.append(article)
+
+    return items[:max_items]
+
+
+def _fetch_gnews_articles(symbol: str, asset_name: str, max_items: int, locale: str = "en") -> list[dict]:
     api_key = os.getenv("GNEWS_API_KEY", "").strip()
     if not api_key:
         return []
@@ -283,7 +423,7 @@ def _fetch_gnews_articles(query: str, max_items: int, locale: str = "en") -> lis
     endpoint = "https://gnews.io/api/v4/search"
     from_date = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ")
     params = {
-        "q": query,
+        "q": f'"{symbol}" OR "{asset_name}"',
         "lang": language,
         "sortby": "publishedAt",
         "max": max(1, min(max_items, 10)),
@@ -291,10 +431,28 @@ def _fetch_gnews_articles(query: str, max_items: int, locale: str = "en") -> lis
         "apikey": api_key,
     }
 
-    req = Request(f"{endpoint}?{urlencode(params)}", headers={"User-Agent": "invest-explorer/1.0"})
-    with urlopen(req, timeout=12) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    return payload.get("articles", []) if isinstance(payload, dict) else []
+    try:
+        payload = _http_get_json(f"{endpoint}?{urlencode(params)}")
+    except Exception:
+        return []
+
+    rows = payload.get("articles", []) if isinstance(payload, dict) else []
+    items: list[dict] = []
+    for row in rows:
+        article = _normalize_news_item(
+            provider="gnews",
+            symbol=symbol,
+            asset_name=asset_name,
+            title=row.get("title"),
+            description=row.get("description"),
+            url=row.get("url"),
+            published_at=row.get("publishedAt"),
+            source=(row.get("source") or {}).get("name"),
+            image=row.get("image"),
+        )
+        if article:
+            items.append(article)
+    return items[:max_items]
 
 
 class SupabaseJWTMiddleware(BaseHTTPMiddleware):
@@ -699,13 +857,17 @@ def get_watchlist_news(
             "message": "News requires a verified user session and configured Supabase.",
         }
 
-    if not os.getenv("GNEWS_API_KEY", "").strip():
+    has_finnhub = bool(os.getenv("FINNHUB_API_KEY", "").strip())
+    has_alpha = bool(os.getenv("ALPHAVANTAGE_API_KEY", "").strip())
+    has_gnews = bool(os.getenv("GNEWS_API_KEY", "").strip())
+
+    if not any([has_finnhub, has_alpha, has_gnews]):
         return {
             "read_only": False,
             "owner": user,
-            "source": "gnews",
+            "source": "none",
             "items": [],
-            "message": "Set GNEWS_API_KEY to enable watchlist news.",
+            "message": "Set at least one key: FINNHUB_API_KEY, ALPHAVANTAGE_API_KEY, or GNEWS_API_KEY.",
         }
 
     try:
@@ -717,31 +879,44 @@ def get_watchlist_news(
         for item in candidates:
             asset = item.get("asset", {}) if isinstance(item, dict) else {}
             symbol = str(asset.get("symbol", "")).strip().upper()
+            exchange = str(asset.get("exchange", "")).strip().upper()
             name = str(asset.get("name", "")).strip()
             if not symbol:
                 continue
 
-            query = f'"{symbol}" OR "{name}"'
-            try:
-                articles = _fetch_gnews_articles(query=query, max_items=per_asset, locale=locale)
-            except Exception as e:
-                logger.warning(f"News fetch failed for {symbol}: {e}")
-                continue
+            provider_chain = [
+                ("finnhub", lambda remaining: _fetch_finnhub_articles(symbol, exchange, name, remaining)),
+                ("alphavantage", lambda remaining: _fetch_alpha_vantage_articles(symbol, name, remaining)),
+                ("gnews", lambda remaining: _fetch_gnews_articles(symbol, name, remaining, locale=locale)),
+            ]
 
-            for article in articles:
-                url = str(article.get("url", "")).strip()
-                if not url or url in dedup:
+            collected_for_asset = 0
+            for provider_name, provider_fetch in provider_chain:
+                if provider_name == "finnhub" and not has_finnhub:
                     continue
-                dedup[url] = {
-                    "symbol": symbol,
-                    "asset_name": name,
-                    "title": article.get("title"),
-                    "description": article.get("description"),
-                    "url": url,
-                    "published_at": article.get("publishedAt"),
-                    "source": (article.get("source") or {}).get("name"),
-                    "image": article.get("image"),
-                }
+                if provider_name == "alphavantage" and not has_alpha:
+                    continue
+                if provider_name == "gnews" and not has_gnews:
+                    continue
+
+                remaining = per_asset - collected_for_asset
+                if remaining <= 0:
+                    break
+
+                try:
+                    provider_items = provider_fetch(remaining)
+                except Exception as e:
+                    logger.warning(f"News fetch failed for {symbol} on {provider_name}: {e}")
+                    continue
+
+                for article in provider_items:
+                    url = str(article.get("url", "")).strip()
+                    if not url or url in dedup:
+                        continue
+                    dedup[url] = article
+                    collected_for_asset += 1
+                    if collected_for_asset >= per_asset:
+                        break
 
         items = sorted(
             dedup.values(),
@@ -752,7 +927,7 @@ def get_watchlist_news(
         return {
             "read_only": False,
             "owner": user,
-            "source": "gnews",
+            "source": "finnhub|alphavantage|gnews",
             "items": items,
             "message": "ok",
         }
