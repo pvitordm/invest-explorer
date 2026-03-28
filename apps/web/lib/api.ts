@@ -203,7 +203,7 @@ export async function removeWatchlistItem(input: WatchlistAssetInput): Promise<A
 export async function fetchPriceHistory(input: {
   symbol: string;
   exchange: string;
-  period?: "30d" | "90d" | "1y" | "5y" | "custom";
+  period?: "30d" | "90d" | "1y" | "5y" | "max" | "custom";
   startDate?: string;
   endDate?: string;
   limit?: number;

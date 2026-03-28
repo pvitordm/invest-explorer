@@ -383,6 +383,8 @@ async def _scheduler_loop() -> None:
 def _period_to_start(period: str) -> datetime:
     now = datetime.now(timezone.utc)
     p = period.lower().strip()
+    if p in {"all", "max", "full"}:
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
     if p == "30d":
         return now - timedelta(days=30)
     if p == "90d":
@@ -1156,6 +1158,7 @@ def get_price_history(
 
         if parsed_end is None:
             latest_owner = _safe_parse_datetime(str(owner_rows[-1].get("collected_at") or "")) if owner_rows else datetime.min.replace(tzinfo=timezone.utc)
+            first_owner = _safe_parse_datetime(str(owner_rows[0].get("collected_at") or "")) if owner_rows else datetime.max.replace(tzinfo=timezone.utc)
             shared_desc = (
                 _build_history_query(include_owner=False)
                 .order("collected_at", desc=True)
@@ -1166,8 +1169,12 @@ def get_price_history(
             )
             shared_rows = _unique_points_from_desc(shared_desc, limit)
             latest_shared = _safe_parse_datetime(str(shared_rows[-1].get("collected_at") or "")) if shared_rows else datetime.min.replace(tzinfo=timezone.utc)
+            first_shared = _safe_parse_datetime(str(shared_rows[0].get("collected_at") or "")) if shared_rows else datetime.max.replace(tzinfo=timezone.utc)
 
-            if shared_rows and (not owner_rows or latest_shared > latest_owner + timedelta(hours=24)):
+            owner_is_stale = latest_shared > latest_owner + timedelta(hours=24)
+            owner_has_shorter_coverage = first_shared + timedelta(days=30) < first_owner
+
+            if shared_rows and (not owner_rows or owner_is_stale or owner_has_shorter_coverage):
                 rows = shared_rows
                 history_source = "shared_fallback"
 

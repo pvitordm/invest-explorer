@@ -25,6 +25,7 @@ type Messages = {
   dailyChange: string;
   weeklyChange: string;
   monthlyChange: string;
+  allHistory: string;
   customRange: string;
   fromDate: string;
   toDate: string;
@@ -71,6 +72,7 @@ const translations: Record<Locale, Messages> = {
     dailyChange: "Variação 1D",
     weeklyChange: "Variação 7D",
     monthlyChange: "Variação 30D",
+    allHistory: "Tudo",
     customRange: "Personalizado",
     fromDate: "De",
     toDate: "Até",
@@ -115,6 +117,7 @@ const translations: Record<Locale, Messages> = {
     dailyChange: "1D change",
     weeklyChange: "7D change",
     monthlyChange: "30D change",
+    allHistory: "All",
     customRange: "Custom",
     fromDate: "From",
     toDate: "To",

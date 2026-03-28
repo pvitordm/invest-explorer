@@ -64,7 +64,7 @@ type WatchlistPerformance = {
   changePct: number;
 };
 
-type HistoryPeriod = "30d" | "90d" | "1y" | "5y" | "custom";
+type HistoryPeriod = "30d" | "90d" | "1y" | "5y" | "all" | "custom";
 type ThemePreference = "system" | "light" | "dark";
 
 type MarketOverview = ApiMarketOverviewResponse;
@@ -207,6 +207,10 @@ function filterPointsByRange(
 ): ApiPriceHistoryPoint[] {
   if (!points.length) return [];
 
+  if (period === "all") {
+    return points;
+  }
+
   if (period === "custom") {
     if (!customRange) return [];
     const startMs = new Date(customRange.startDate).getTime();
@@ -220,7 +224,7 @@ function filterPointsByRange(
     });
   }
 
-  const daysByPeriod: Record<Exclude<HistoryPeriod, "custom">, number> = {
+  const daysByPeriod: Record<Exclude<HistoryPeriod, "custom" | "all">, number> = {
     "30d": 30,
     "90d": 90,
     "1y": 365,
@@ -229,7 +233,7 @@ function filterPointsByRange(
 
   const lastPoint = points[points.length - 1];
   const endMs = new Date(lastPoint.collected_at).getTime();
-  const days = daysByPeriod[period as Exclude<HistoryPeriod, "custom">] ?? 365;
+  const days = daysByPeriod[period as Exclude<HistoryPeriod, "custom" | "all">] ?? 365;
   const startMs = endMs - days * 24 * 60 * 60 * 1000;
   return points.filter((point) => new Date(point.collected_at).getTime() >= startMs);
 }
@@ -544,8 +548,8 @@ export default function HomePage() {
     fetchPriceHistory({
       symbol: selectedAsset.symbol,
       exchange: selectedAsset.exchange,
-      period: "5y",
-      limit: 5000
+      period: "max",
+      limit: 20000
     })
       .then((response) => setHistoryPoints(response.points ?? []))
       .catch(() => setHistoryPoints([]))
@@ -910,7 +914,7 @@ export default function HomePage() {
           <div className="history-header">
             <h3>{msg.assetHistory}: {selectedAsset.symbol}</h3>
             <div className="history-periods">
-              {(["30d", "90d", "1y", "5y"] as Exclude<HistoryPeriod, "custom">[]).map((p) => (
+              {(["30d", "90d", "1y", "5y", "all"] as Exclude<HistoryPeriod, "custom">[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => {
@@ -919,7 +923,7 @@ export default function HomePage() {
                   }}
                   disabled={isHistoryLoading || p === historyPeriod}
                 >
-                  {p.toUpperCase()}
+                  {p === "all" ? msg.allHistory : p.toUpperCase()}
                 </button>
               ))}
               <button onClick={() => setHistoryPeriod("custom")} disabled={isHistoryLoading || historyPeriod === "custom"}>
