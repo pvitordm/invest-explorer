@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from market_data import build_live_snapshot_payload, CURATED_ASSETS
+from market_data import build_currency_rates_payload, build_live_snapshot_payload, CURATED_ASSETS
 from supabase import create_client, Client
 
 try:
@@ -187,6 +187,13 @@ def _persist_price_history(client: Client, owner_id: str, payload: dict, snapsho
         client.table("price_history").upsert(rows, on_conflict="owner_id,asset_id,collected_at").execute()
 
 
+def _persist_exchange_rates(client: Client) -> None:
+    rows = build_currency_rates_payload()
+    if not rows:
+        return
+    client.table("exchange_rates").upsert(rows, on_conflict="base_currency,quote_currency,collected_at").execute()
+
+
 def _list_owner_ids(client: Client) -> list[str]:
     owner_ids: set[str] = set()
     for table_name in ["snapshots", "watchlists", "portfolio_positions"]:
@@ -212,6 +219,10 @@ def _run_scheduled_refresh_once() -> None:
 
     _upsert_curated_assets(admin)
     payload = build_live_snapshot_payload()
+    try:
+        _persist_exchange_rates(admin)
+    except Exception as e:
+        logger.warning(f"Scheduled exchange-rate persistence failed: {e}")
     for owner_id in owner_ids:
         try:
             snapshot_id = _persist_snapshot(admin, owner_id, payload)
@@ -516,6 +527,54 @@ def _fetch_market_fallback_news(max_items: int, locale: str = "en") -> list[dict
     return items[:max_items]
 
 
+def _collect_asset_news(symbol: str, exchange: str, asset_name: str, limit: int, locale: str = "en") -> list[dict]:
+    has_finnhub = bool(os.getenv("FINNHUB_API_KEY", "").strip())
+    has_alpha = bool(os.getenv("ALPHAVANTAGE_API_KEY", "").strip())
+    has_gnews = bool(os.getenv("GNEWS_API_KEY", "").strip())
+
+    provider_chain = [
+        ("finnhub", lambda remaining: _fetch_finnhub_articles(symbol, exchange, asset_name, remaining)),
+        ("alphavantage", lambda remaining: _fetch_alpha_vantage_articles(symbol, asset_name, remaining)),
+        ("gnews", lambda remaining: _fetch_gnews_articles(symbol, asset_name, remaining, locale=locale)),
+    ]
+
+    dedup: dict[str, dict] = {}
+    for provider_name, provider_fetch in provider_chain:
+        if provider_name == "finnhub" and not has_finnhub:
+            continue
+        if provider_name == "alphavantage" and not has_alpha:
+            continue
+        if provider_name == "gnews" and not has_gnews:
+            continue
+
+        remaining = limit - len(dedup)
+        if remaining <= 0:
+            break
+
+        try:
+            provider_items = provider_fetch(remaining)
+        except Exception as e:
+            logger.warning(f"News fetch failed for {symbol} on {provider_name}: {e}")
+            continue
+
+        for article in provider_items:
+            url = str(article.get("url", "")).strip()
+            if url and url not in dedup:
+                dedup[url] = article
+
+    if not dedup and has_gnews:
+        for article in _fetch_market_fallback_news(limit, locale=locale):
+            url = str(article.get("url", "")).strip()
+            if url and url not in dedup:
+                dedup[url] = article
+
+    return sorted(
+        dedup.values(),
+        key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
+        reverse=True,
+    )[:limit]
+
+
 class SupabaseJWTMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
@@ -635,6 +694,12 @@ def refresh_snapshot(request: Request) -> dict:
         snapshot_id = f"snapshot_{payload.get('updated_at', 'unknown')}"
 
         admin = _get_supabase_admin()
+        if admin:
+            try:
+                _persist_exchange_rates(admin)
+            except Exception as e:
+                logger.warning(f"Failed to persist exchange rates in Supabase: {e}")
+
         if admin and _is_valid_uuid(owner_id):
             try:
                 _upsert_curated_assets(admin)
@@ -901,6 +966,85 @@ def get_price_history(
         return JSONResponse(status_code=500, content={"detail": "Failed to fetch price history"})
 
 
+@app.get("/market/overview")
+def get_market_overview(
+    request: Request,
+    locale: str = Query("en"),
+) -> dict:
+    user = getattr(request.state, "user", None) or {}
+    try:
+        payload = build_live_snapshot_payload()
+        assets = payload.get("assets", []) if isinstance(payload, dict) else []
+        featured_symbols = ["PETR4", "AAPL", "NVDA", "BTC", "ETH"]
+        featured_assets = [asset for asset in assets if str(asset.get("symbol", "")).upper() in featured_symbols]
+        featured_assets = sorted(featured_assets, key=lambda asset: featured_symbols.index(str(asset.get("symbol", "")).upper()))
+        headline_items = _fetch_market_fallback_news(1, locale=locale)
+        headline = headline_items[0] if headline_items else None
+        return {
+            "read_only": False,
+            "owner": user,
+            "summary": {
+                "asset_count": payload.get("asset_count", 0),
+                "live_asset_count": payload.get("live_asset_count", 0),
+                "fallback_asset_count": payload.get("fallback_asset_count", 0),
+                "updated_at": payload.get("updated_at"),
+            },
+            "featured_assets": featured_assets,
+            "currency_rates": build_currency_rates_payload(),
+            "headline": headline,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to build market overview: {e}")
+        return JSONResponse(status_code=500, content={"detail": "Failed to build market overview"})
+
+
+@app.get("/asset/news")
+def get_asset_news(
+    request: Request,
+    symbol: str = Query(...),
+    exchange: str = Query(...),
+    locale: str = Query("en"),
+    limit: int = Query(8, ge=1, le=20),
+) -> dict:
+    user = getattr(request.state, "user", None) or {}
+    owner_id = user.get("sub")
+    admin = _get_supabase_admin()
+
+    if not admin or not _is_valid_uuid(owner_id):
+        return {
+            "read_only": True,
+            "owner": user,
+            "source": "none",
+            "items": [],
+            "message": "News requires a verified user session and configured Supabase.",
+        }
+
+    symbol_norm = symbol.strip().upper()
+    exchange_norm = exchange.strip().upper()
+    try:
+        asset_row = (
+            admin.table("assets")
+            .select("name,symbol,exchange")
+            .eq("symbol", symbol_norm)
+            .eq("exchange", exchange_norm)
+            .limit(1)
+            .execute()
+            .data
+        )
+        asset_name = asset_row[0].get("name") if asset_row else symbol_norm
+        items = _collect_asset_news(symbol_norm, exchange_norm, str(asset_name), limit, locale=locale)
+        return {
+            "read_only": False,
+            "owner": user,
+            "source": "finnhub|alphavantage|gnews",
+            "items": items,
+            "message": "ok",
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch asset news: {e}")
+        return JSONResponse(status_code=500, content={"detail": "Failed to fetch asset news"})
+
+
 @app.get("/watchlist/news")
 def get_watchlist_news(
     request: Request,
@@ -965,57 +1109,16 @@ def get_watchlist_news(
             if not symbol:
                 continue
 
-            provider_chain = [
-                ("finnhub", lambda remaining: _fetch_finnhub_articles(symbol, exchange, name, remaining)),
-                ("alphavantage", lambda remaining: _fetch_alpha_vantage_articles(symbol, name, remaining)),
-                ("gnews", lambda remaining: _fetch_gnews_articles(symbol, name, remaining, locale=locale)),
-            ]
-
-            collected_for_asset = 0
-            for provider_name, provider_fetch in provider_chain:
-                if provider_name == "finnhub" and not has_finnhub:
-                    continue
-                if provider_name == "alphavantage" and not has_alpha:
-                    continue
-                if provider_name == "gnews" and not has_gnews:
-                    continue
-
-                remaining = per_asset - collected_for_asset
-                if remaining <= 0:
-                    break
-
-                try:
-                    provider_items = provider_fetch(remaining)
-                except Exception as e:
-                    logger.warning(f"News fetch failed for {symbol} on {provider_name}: {e}")
-                    continue
-
-                for article in provider_items:
-                    url = str(article.get("url", "")).strip()
-                    if not url or url in dedup:
-                        continue
+            for article in _collect_asset_news(symbol, exchange, name, per_asset, locale=locale):
+                url = str(article.get("url", "")).strip()
+                if url and url not in dedup:
                     dedup[url] = article
-                    collected_for_asset += 1
-                    if collected_for_asset >= per_asset:
-                        break
 
         items = sorted(
             dedup.values(),
             key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
             reverse=True,
         )[:limit]
-
-        if not items and has_gnews:
-            fallback_news = _fetch_market_fallback_news(limit, locale=locale)
-            for article in fallback_news:
-                url = str(article.get("url", "")).strip()
-                if url and url not in dedup:
-                    dedup[url] = article
-            items = sorted(
-                dedup.values(),
-                key=lambda row: _safe_parse_datetime(str(row.get("published_at") or "")),
-                reverse=True,
-            )[:limit]
 
         return {
             "read_only": False,

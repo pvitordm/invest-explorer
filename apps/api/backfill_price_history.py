@@ -136,6 +136,24 @@ def fetch_close_series(ticker: str, start: datetime, end: datetime):
     return series
 
 
+def build_daily_fx_lookup(ticker: str, start: datetime, end: datetime) -> dict[str, float]:
+    series = fetch_close_series(ticker, start, end)
+    if series is None:
+        return {}
+
+    normalized = series.copy()
+    normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
+    daily_index = pd.date_range(start=start.date(), end=end.date(), freq="D")
+    normalized = normalized.reindex(daily_index).ffill().bfill()
+
+    lookup: dict[str, float] = {}
+    for idx, value in normalized.items():
+        parsed = to_float(value)
+        if parsed is not None:
+            lookup[pd.to_datetime(idx).strftime("%Y-%m-%d")] = parsed
+    return lookup
+
+
 def fx_at_date(currency: str, date_key: str, usd_brl, usd_jpy) -> float | None:
     if currency == "BRL":
         return 1.0
@@ -167,8 +185,8 @@ def backfill_owner(
         start_iso = start.replace(tzinfo=timezone.utc).isoformat()
         client.table("price_history").delete().eq("owner_id", owner_id).gte("collected_at", start_iso).execute()
 
-    usd_brl = fetch_close_series("BRL=X", start, end)
-    usd_jpy = fetch_close_series("JPY=X", start, end)
+    usd_brl = build_daily_fx_lookup("BRL=X", start, end)
+    usd_jpy = build_daily_fx_lookup("JPY=X", start, end)
 
     total_rows = 0
     for asset in CURATED_ASSETS:

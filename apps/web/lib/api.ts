@@ -98,6 +98,43 @@ export type ApiWatchlistNewsResponse = {
   message?: string;
 };
 
+export type ApiExchangeRate = {
+  base_currency: string;
+  quote_currency: string;
+  rate: number;
+  source?: string | null;
+  collected_at: string;
+};
+
+export type ApiMarketOverviewResponse = {
+  read_only: boolean;
+  owner: {
+    sub?: string;
+    role?: string;
+    email?: string;
+  };
+  summary: {
+    asset_count: number;
+    live_asset_count: number;
+    fallback_asset_count: number;
+    updated_at: string;
+  };
+  featured_assets: Array<{
+    name: string;
+    symbol: string;
+    exchange: string;
+    currency: string;
+    asset_class?: string;
+    country_code?: string | null;
+    price: number | null;
+    fx_to_brl?: number | null;
+    valuation_brl: number | null;
+    data_quality?: string | null;
+  }>;
+  currency_rates: ApiExchangeRate[];
+  headline?: ApiWatchlistNewsItem | null;
+};
+
 async function getAccessToken(): Promise<string> {
   try {
     const supabase = getSupabaseClient();
@@ -191,4 +228,26 @@ export async function fetchWatchlistNews(input?: {
   params.set("per_asset", String(input?.perAsset ?? 4));
   params.set("locale", input?.locale ?? "en");
   return apiRequest<ApiWatchlistNewsResponse>(`/watchlist/news?${params.toString()}`, { method: "GET" });
+}
+
+export async function fetchAssetNews(input: {
+  symbol: string;
+  exchange: string;
+  locale?: string;
+  limit?: number;
+}): Promise<ApiWatchlistNewsResponse> {
+  const params = new URLSearchParams();
+  params.set("symbol", input.symbol);
+  params.set("exchange", input.exchange);
+  params.set("locale", input.locale ?? "en");
+  params.set("limit", String(input.limit ?? 8));
+  return apiRequest<ApiWatchlistNewsResponse>(`/asset/news?${params.toString()}`, { method: "GET" });
+}
+
+export async function fetchMarketOverview(input?: {
+  locale?: string;
+}): Promise<ApiMarketOverviewResponse> {
+  const params = new URLSearchParams();
+  params.set("locale", input?.locale ?? "en");
+  return apiRequest<ApiMarketOverviewResponse>(`/market/overview?${params.toString()}`, { method: "GET" });
 }

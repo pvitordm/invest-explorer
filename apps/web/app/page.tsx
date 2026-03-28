@@ -5,11 +5,14 @@ import { OfflineBanner } from "@/components/OfflineBanner";
 import { InteractivePriceChart } from "@/components/InteractivePriceChart";
 import {
   addWatchlistItem,
+  fetchAssetNews,
+  fetchMarketOverview,
   fetchPriceHistory,
-  fetchWatchlistNews,
   fetchWatchlist,
   removeWatchlistItem,
   triggerRefresh,
+  type ApiExchangeRate,
+  type ApiMarketOverviewResponse,
   type ApiPriceHistoryPoint,
   type ApiWatchlistNewsItem,
   type ApiWatchlistItem
@@ -63,6 +66,8 @@ type WatchlistPerformance = {
 
 type HistoryPeriod = "30d" | "90d" | "1y" | "5y" | "custom";
 type ThemePreference = "system" | "light" | "dark";
+
+type MarketOverview = ApiMarketOverviewResponse;
 
 function isoDateDaysAgo(days: number): string {
   const d = new Date();
@@ -221,6 +226,7 @@ export default function HomePage() {
   const [historyPoints, setHistoryPoints] = useState<ApiPriceHistoryPoint[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [watchlistPerformance, setWatchlistPerformance] = useState<WatchlistPerformance[]>([]);
+  const [marketOverview, setMarketOverview] = useState<MarketOverview | null>(null);
   const [newsItems, setNewsItems] = useState<ApiWatchlistNewsItem[]>([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [newsStatusMessage, setNewsStatusMessage] = useState<string>("");
@@ -375,34 +381,41 @@ export default function HomePage() {
         // Silently fail in dev mode - watchlist is optional
       });
 
+    fetchMarketOverview({ locale })
+      .then((response) => setMarketOverview(response))
+      .catch(() => setMarketOverview(null));
+
     loadLatestSnapshot().catch(() => undefined);
   }, [isOffline, isAuthenticated, locale]);
 
   useEffect(() => {
-    if (isOffline || !isAuthenticated || watchlistItems.length === 0) {
+    if (!selectedAsset) {
+      setNewsItems([]);
+      setNewsStatusMessage(msg.selectAssetForNews);
+      return;
+    }
+
+    if (isOffline || !isAuthenticated) {
       setNewsItems([]);
       setNewsStatusMessage(
         isOffline
           ? locale === "pt-BR"
             ? "Notícias indisponíveis offline."
             : "News is unavailable while offline."
-          : !isAuthenticated
-            ? locale === "pt-BR"
-              ? "Ative uma sessão para carregar notícias."
-              : "Start a session to load news."
-            : locale === "pt-BR"
-              ? "Adicione ativos à watchlist para ver notícias relacionadas."
-              : "Add assets to the watchlist to see related news."
+          : locale === "pt-BR"
+            ? "Ative uma sessão para carregar notícias."
+            : "Start a session to load news."
       );
       return;
     }
 
     setIsNewsLoading(true);
     setNewsStatusMessage("");
-    fetchWatchlistNews({
+    fetchAssetNews({
+      symbol: selectedAsset.symbol,
+      exchange: selectedAsset.exchange,
       locale,
-      limit: 20,
-      perAsset: 4
+      limit: 8
     })
       .then((response) => {
         setNewsItems(response.items ?? []);
@@ -417,7 +430,7 @@ export default function HomePage() {
         setNewsStatusMessage(locale === "pt-BR" ? "Falha ao carregar notícias." : "Failed to load news.");
       })
       .finally(() => setIsNewsLoading(false));
-  }, [isOffline, isAuthenticated, watchlistItems, locale]);
+  }, [selectedAsset, isOffline, isAuthenticated, locale, msg.selectAssetForNews]);
 
   useEffect(() => {
     if (!selectedAsset || isOffline || !isAuthenticated) return;
@@ -595,14 +608,15 @@ export default function HomePage() {
   }
 
   async function refreshNews() {
-    if (isOffline || !isAuthenticated) return;
+    if (isOffline || !isAuthenticated || !selectedAsset) return;
     setIsNewsLoading(true);
     setNewsStatusMessage("");
     try {
-      const response = await fetchWatchlistNews({
+      const response = await fetchAssetNews({
+        symbol: selectedAsset.symbol,
+        exchange: selectedAsset.exchange,
         locale,
-        limit: 20,
-        perAsset: 4
+        limit: 8
       });
       setNewsItems(response.items ?? []);
       setNewsStatusMessage(
@@ -638,6 +652,59 @@ export default function HomePage() {
       <p className="muted snapshot-line" suppressHydrationWarning>
         {locale === "pt-BR" ? "Snapshot em" : "Snapshot at"}: {new Date(snapshot.updated_at).toLocaleString(locale)} • {locale === "pt-BR" ? "Base" : "Base"}: BRL
       </p>
+
+      {marketOverview ? (
+        <div className="card highlights-card">
+          <div className="highlights-header">
+            <div>
+              <h3>{msg.marketHighlights}</h3>
+              <p className="muted highlights-summary">
+                {msg.daySummary}: {locale === "pt-BR" ? "ativos monitorados" : "tracked assets"} {marketOverview.summary.asset_count} • {locale === "pt-BR" ? "ao vivo" : "live"} {marketOverview.summary.live_asset_count} • {locale === "pt-BR" ? "fallback" : "fallback"} {marketOverview.summary.fallback_asset_count}
+              </p>
+            </div>
+            <p className="muted highlights-updated" suppressHydrationWarning>
+              {new Date(marketOverview.summary.updated_at).toLocaleString(locale)}
+            </p>
+          </div>
+
+          <div className="highlights-grid">
+            {marketOverview.featured_assets.map((asset) => (
+              <article key={`${asset.exchange}-${asset.symbol}`} className="highlight-tile">
+                <p className="muted highlight-kicker">{asset.exchange}</p>
+                <strong>{asset.symbol}</strong>
+                <p>{asset.name}</p>
+                <p className="muted">
+                  {formatCurrency(asset.price, asset.currency, locale)} • {formatCurrency(asset.valuation_brl, "BRL", locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <div className="highlights-bottom">
+            <div className="headline-block">
+              <h4>{msg.mainHeadline}</h4>
+              {marketOverview.headline ? (
+                <a href={marketOverview.headline.url} target="_blank" rel="noreferrer" className="news-title">
+                  {marketOverview.headline.title}
+                </a>
+              ) : (
+                <p className="muted">{msg.noNews}</p>
+              )}
+            </div>
+            <div className="currencies-block">
+              <h4>{msg.keyCurrencies}</h4>
+              <div className="currency-list">
+                {(marketOverview.currency_rates as ApiExchangeRate[]).filter((rate) => rate.base_currency !== "BRL").map((rate) => (
+                  <div key={`${rate.base_currency}-${rate.quote_currency}`} className="currency-chip">
+                    <strong>{rate.base_currency}/{rate.quote_currency}</strong>
+                    <span>{formatCurrency(rate.rate, rate.quote_currency, locale)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="card">
         <h3>{msg.settings}</h3>
@@ -729,32 +796,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="card" id="relevant-news">
-        <div className="news-header">
-          <h3>{msg.relevantNews}</h3>
-          <button onClick={refreshNews} disabled={isNewsLoading || isOffline || !isAuthenticated}>{msg.refreshNews}</button>
-        </div>
-        {isNewsLoading ? (
-          <p className="muted">{msg.loadingNews}</p>
-        ) : newsItems.length === 0 ? (
-          <p className="muted">{newsStatusMessage || msg.noNews}</p>
-        ) : (
-          <div className="news-list">
-            {newsItems.slice(0, 12).map((item) => (
-              <article key={`${item.symbol}-${item.url}`} className="news-item">
-                <p className="news-meta muted">
-                  <strong>{item.symbol}</strong>
-                  {item.source ? ` • ${item.source}` : ""}
-                  {item.published_at ? ` • ${new Date(item.published_at).toLocaleString(locale)}` : ""}
-                </p>
-                <a href={item.url} target="_blank" rel="noreferrer" className="news-title">{item.title}</a>
-                {item.description ? <p className="muted">{item.description}</p> : null}
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-
       {selectedAsset ? (
         <div className="card">
           <div className="history-header">
@@ -805,6 +846,30 @@ export default function HomePage() {
                 <span>{msg.monthlyChange}: <strong className={(calcChangePct(historyPoints, 30) ?? 0) >= 0 ? "change-positive" : "change-negative"}>{formatPercent(calcChangePct(historyPoints, 30), locale)}</strong></span>
               </div>
             </>
+          )}
+
+          <div className="news-header" style={{ marginTop: "1.25rem" }}>
+            <h3>{msg.relevantNews}</h3>
+            <button onClick={refreshNews} disabled={isNewsLoading || isOffline || !isAuthenticated || !selectedAsset}>{msg.refreshNews}</button>
+          </div>
+          {isNewsLoading ? (
+            <p className="muted">{msg.loadingNews}</p>
+          ) : newsItems.length === 0 ? (
+            <p className="muted">{newsStatusMessage || msg.noNews}</p>
+          ) : (
+            <div className="news-list">
+              {newsItems.slice(0, 8).map((item) => (
+                <article key={`${item.symbol}-${item.url}`} className="news-item">
+                  <p className="news-meta muted">
+                    <strong>{item.symbol}</strong>
+                    {item.source ? ` • ${item.source}` : ""}
+                    {item.published_at ? ` • ${new Date(item.published_at).toLocaleString(locale)}` : ""}
+                  </p>
+                  <a href={item.url} target="_blank" rel="noreferrer" className="news-title">{item.title}</a>
+                  {item.description ? <p className="muted">{item.description}</p> : null}
+                </article>
+              ))}
+            </div>
           )}
         </div>
       ) : null}

@@ -65,6 +65,14 @@ FALLBACK_PRICES: dict[str, float] = {
     "BNB": 590.0,
 }
 
+FALLBACK_CURRENCY_RATES_TO_BRL: dict[str, float] = {
+    "BRL": 1.0,
+    "USD": 5.0,
+    "EUR": 5.5,
+    "GBP": 6.4,
+    "JPY": 0.033,
+}
+
 
 def _latest_close(symbol: str) -> float | None:
     history = yf.Ticker(symbol).history(period="5d", interval="1d", auto_adjust=False)
@@ -79,17 +87,36 @@ def _latest_close(symbol: str) -> float | None:
 def get_fx_rates_to_brl() -> dict[str, float]:
     usd_brl = _latest_close("BRL=X")
     usd_jpy = _latest_close("JPY=X")
+    eur_brl = _latest_close("EURBRL=X")
+    gbp_brl = _latest_close("GBPBRL=X")
 
     if usd_brl is None:
-        usd_brl = 5.0
+        usd_brl = FALLBACK_CURRENCY_RATES_TO_BRL["USD"]
 
-    jpy_brl = (usd_brl / usd_jpy) if usd_jpy else 0.033
+    jpy_brl = (usd_brl / usd_jpy) if usd_jpy else FALLBACK_CURRENCY_RATES_TO_BRL["JPY"]
 
     return {
         "BRL": 1.0,
         "USD": float(usd_brl),
+        "EUR": float(eur_brl if eur_brl is not None else FALLBACK_CURRENCY_RATES_TO_BRL["EUR"]),
+        "GBP": float(gbp_brl if gbp_brl is not None else FALLBACK_CURRENCY_RATES_TO_BRL["GBP"]),
         "JPY": float(jpy_brl),
     }
+
+
+def build_currency_rates_payload() -> list[dict[str, Any]]:
+    rates = get_fx_rates_to_brl()
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        {
+            "base_currency": base_currency,
+            "quote_currency": "BRL",
+            "rate": rate,
+            "source": "yfinance",
+            "collected_at": now,
+        }
+        for base_currency, rate in rates.items()
+    ]
 
 
 def build_live_snapshot_payload() -> dict[str, Any]:

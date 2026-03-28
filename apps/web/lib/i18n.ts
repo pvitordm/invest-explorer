@@ -38,6 +38,11 @@ type Messages = {
   refreshNews: string;
   noNews: string;
   loadingNews: string;
+  selectAssetForNews: string;
+  marketHighlights: string;
+  daySummary: string;
+  keyCurrencies: string;
+  mainHeadline: string;
 };
 
 const translations: Record<Locale, Messages> = {
@@ -78,7 +83,12 @@ const translations: Record<Locale, Messages> = {
     relevantNews: "Notícias relevantes",
     refreshNews: "Atualizar notícias",
     noNews: "Sem notícias no momento.",
-    loadingNews: "Carregando notícias..."
+    loadingNews: "Carregando notícias...",
+    selectAssetForNews: "Selecione um ativo para ver notícias relacionadas.",
+    marketHighlights: "Destaques do mercado",
+    daySummary: "Resumo do dia",
+    keyCurrencies: "Principais moedas",
+    mainHeadline: "Manchete principal"
   },
   en: {
     title: "Invest Explorer",
@@ -117,7 +127,12 @@ const translations: Record<Locale, Messages> = {
     relevantNews: "Relevant news",
     refreshNews: "Refresh news",
     noNews: "No news right now.",
-    loadingNews: "Loading news..."
+    loadingNews: "Loading news...",
+    selectAssetForNews: "Select an asset to view related news.",
+    marketHighlights: "Market highlights",
+    daySummary: "Day summary",
+    keyCurrencies: "Key currencies",
+    mainHeadline: "Main headline"
   }
 };
 
